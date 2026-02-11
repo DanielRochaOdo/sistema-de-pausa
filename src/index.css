@@ -1,0 +1,55 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  @apply font-sans text-slate-900;
+  background: radial-gradient(1200px 600px at 10% 10%, #eef8f6, transparent 60%),
+    radial-gradient(1200px 700px at 90% 0%, #fef3c7, transparent 55%),
+    linear-gradient(180deg, #f7f4ef 0%, #f1ece4 100%);
+  min-height: 100vh;
+}
+
+* {
+  @apply antialiased;
+}
+
+@layer components {
+  .card {
+    @apply bg-white/80 backdrop-blur border border-white/70 rounded-2xl shadow-soft p-6;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 font-medium transition disabled:opacity-60 disabled:cursor-not-allowed;
+  }
+
+  .btn-primary {
+    @apply btn bg-brand-600 text-white hover:bg-brand-700;
+  }
+
+  .btn-secondary {
+    @apply btn bg-slate-900 text-white hover:bg-slate-800;
+  }
+
+  .btn-ghost {
+    @apply btn border border-slate-200 bg-white hover:bg-slate-50;
+  }
+
+  .input {
+    @apply w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-400;
+  }
+
+  .label {
+    @apply text-sm font-medium text-slate-700;
+  }
+
+  .chip {
+    @apply inline-flex items-center rounded-full bg-slate-900 text-white px-3 py-1 text-xs font-medium;
+  }
+}
