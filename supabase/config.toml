@@ -34,3 +34,6 @@ file_size_limit = "50MiB"
 
 [functions.admin-create-user]
 verify_jwt = false
+
+[functions.resolve-login]
+verify_jwt = false

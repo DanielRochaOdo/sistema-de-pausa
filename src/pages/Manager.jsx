@@ -2,12 +2,13 @@ import { useEffect, useMemo, useState } from 'react'
 import TopNav from '../components/TopNav'
 import StatCard from '../components/StatCard'
 import { listDashboard, getPauseTypes } from '../services/apiPauses'
-import { listAgents } from '../services/apiAdmin'
+import { listAgents, listSectors } from '../services/apiAdmin'
 import { formatDuration, formatInputDate, startOfMonth, startOfToday, startOfWeek } from '../utils/format'
 
 export default function Manager() {
   const [agents, setAgents] = useState([])
   const [pauseTypes, setPauseTypes] = useState([])
+  const [sectors, setSectors] = useState([])
   const [dashboard, setDashboard] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -17,13 +18,19 @@ export default function Manager() {
   const [toDate, setToDate] = useState(formatInputDate(new Date()))
   const [agentId, setAgentId] = useState('')
   const [pauseTypeId, setPauseTypeId] = useState('')
+  const [sectorId, setSectorId] = useState('')
 
   useEffect(() => {
     const init = async () => {
       try {
-        const [agentsData, typesData] = await Promise.all([listAgents(), getPauseTypes(false)])
+        const [agentsData, typesData, sectorsData] = await Promise.all([
+          listAgents(),
+          getPauseTypes(false),
+          listSectors()
+        ])
         setAgents(agentsData)
         setPauseTypes(typesData)
+        setSectors(sectorsData)
       } catch (err) {
         console.error(err)
       }
@@ -54,7 +61,8 @@ export default function Manager() {
         from: fromDate,
         to: toDate,
         agentId: agentId || null,
-        pauseTypeId: pauseTypeId || null
+        pauseTypeId: pauseTypeId || null,
+        sectorId: sectorId || null
       })
       setDashboard(data || [])
     } catch (err) {
@@ -66,7 +74,7 @@ export default function Manager() {
 
   useEffect(() => {
     loadDashboard()
-  }, [fromDate, toDate, agentId, pauseTypeId])
+  }, [fromDate, toDate, agentId, pauseTypeId, sectorId])
 
   const summary = useMemo(() => {
     const map = new Map()
@@ -121,7 +129,7 @@ export default function Manager() {
 
         <div className="card">
           <h2 className="font-display text-xl font-semibold text-slate-900">Filtros</h2>
-          <div className="mt-4 grid gap-4 md:grid-cols-5">
+          <div className="mt-4 grid gap-4 md:grid-cols-6">
             <div>
               <label className="label">Periodo</label>
               <select className="input mt-1" value={period} onChange={(e) => setPeriod(e.target.value)}>
@@ -137,6 +145,7 @@ export default function Manager() {
                 type="date"
                 className="input mt-1"
                 value={fromDate}
+                disabled={period !== 'custom'}
                 onChange={(e) => {
                   setPeriod('custom')
                   setFromDate(e.target.value)
@@ -149,6 +158,7 @@ export default function Manager() {
                 type="date"
                 className="input mt-1"
                 value={toDate}
+                disabled={period !== 'custom'}
                 onChange={(e) => {
                   setPeriod('custom')
                   setToDate(e.target.value)
@@ -173,6 +183,17 @@ export default function Manager() {
                 {pauseTypes.map((type) => (
                   <option key={type.id} value={type.id}>
                     {type.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label">Setor</label>
+              <select className="input mt-1" value={sectorId} onChange={(e) => setSectorId(e.target.value)}>
+                <option value="">Todos</option>
+                {sectors.map((sector) => (
+                  <option key={sector.id} value={sector.id}>
+                    {sector.label}
                   </option>
                 ))}
               </select>

@@ -45,14 +45,36 @@ export async function endPause(notes) {
 }
 
 export async function listDashboard(filters) {
-  const { from, to, agentId, pauseTypeId } = filters
+  const { from, to, agentId, pauseTypeId, sectorId } = filters
   const payload = {
     p_from: from,
     p_to: to,
     p_agent_id: agentId || null,
-    p_pause_type_id: pauseTypeId || null
+    p_pause_type_id: pauseTypeId || null,
+    p_team_id: sectorId || null
   }
   const { data, error } = await supabase.rpc('list_dashboard', payload)
   if (error) throw error
   return data
+}
+
+export async function getLatePausesSummary({ fromDate, limit = 5 } = {}) {
+  let query = supabase
+    .from('pauses')
+    .select(
+      'id, ended_at, duration_seconds, atraso, pause_types(label,limit_minutes), profiles!pauses_agent_id_fkey(full_name)',
+      { count: 'exact' }
+    )
+    .eq('atraso', true)
+    .not('ended_at', 'is', null)
+    .order('ended_at', { ascending: false })
+    .limit(limit)
+
+  if (fromDate) {
+    query = query.gte('ended_at', fromDate.toISOString())
+  }
+
+  const { data, error, count } = await query
+  if (error) throw error
+  return { items: data || [], count: count || 0 }
 }

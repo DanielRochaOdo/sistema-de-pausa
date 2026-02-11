@@ -227,17 +227,40 @@ export function AuthProvider({ children }) {
     }
   }, [])
 
-  const signIn = async (email, password) => {
+  const resolveLoginIdentifier = async (identifier) => {
+    const value = String(identifier || '').trim()
+    if (!value) throw new Error('Informe seu email ou nome completo')
+    if (value.includes('@')) return value
+
+    const { data, error } = await supabase.functions.invoke('resolve-login', {
+      body: { identifier: value }
+    })
+    if (error) {
+      const message = error?.context?.error || error.message || 'Falha ao resolver login'
+      throw new Error(message)
+    }
+    if (!data?.email) throw new Error('Nome nao encontrado')
+    return data.email
+  }
+
+  const signIn = async (identifier, password) => {
     setLoading(true)
     setError(null)
     startSlowSessionTimer()
     try {
+      const email = await resolveLoginIdentifier(identifier)
       const { data, error: signInError } = await supabase.auth.signInWithPassword({
         email,
         password
       })
 
       if (signInError) throw signInError
+
+      try {
+        await supabase.auth.signOut({ scope: 'others' })
+      } catch (signOutErr) {
+        console.warn('[auth] failed to sign out other sessions', signOutErr)
+      }
 
       const currentSession = data?.session ?? null
       setSession(currentSession)

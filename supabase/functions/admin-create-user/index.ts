@@ -83,6 +83,43 @@ serve(async (req) => {
 
   const adminClient = createClient(supabaseUrl, supabaseServiceRoleKey)
 
+  const normalizedManagerId = typeof manager_id === 'string' && manager_id ? manager_id : null
+  const providedTeamId = typeof team_id === 'string' && team_id ? team_id : null
+  let resolvedTeamId = providedTeamId
+
+  if (role === 'AGENTE') {
+    if (!normalizedManagerId) {
+      return jsonResponse(400, { error: 'Manager is required for agents' })
+    }
+    const { data: managerProfile, error: managerError } = await adminClient
+      .from('profiles')
+      .select('role, team_id')
+      .eq('id', normalizedManagerId)
+      .maybeSingle()
+    if (managerError || !managerProfile) {
+      return jsonResponse(400, { error: managerError?.message || 'Manager not found' })
+    }
+    if (managerProfile.role !== 'GERENTE') {
+      return jsonResponse(400, { error: 'Manager must be GERENTE' })
+    }
+    if (!resolvedTeamId) {
+      resolvedTeamId = managerProfile.team_id ?? null
+    }
+  }
+
+  if (role === 'GERENTE') {
+    if (normalizedManagerId) {
+      return jsonResponse(400, { error: 'Gerente nao pode ter gerente' })
+    }
+    if (!resolvedTeamId) {
+      return jsonResponse(400, { error: 'Gerente precisa de setor' })
+    }
+  }
+
+  if (role === 'ADMIN') {
+    resolvedTeamId = null
+  }
+
   const { data: created, error: createError } = await adminClient.auth.admin.createUser({
     email: String(email),
     password: String(password),
@@ -98,10 +135,11 @@ serve(async (req) => {
   const { error: insertError } = await adminClient.from('profiles').upsert(
     {
       id: created.user.id,
+      email: created.user.email,
       full_name: String(full_name),
       role,
-      manager_id: manager_id || null,
-      team_id: team_id || null
+      manager_id: role === 'AGENTE' ? normalizedManagerId : null,
+      team_id: resolvedTeamId
     },
     { onConflict: 'id' }
   )

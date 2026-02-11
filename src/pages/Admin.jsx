@@ -2,12 +2,15 @@ import { useEffect, useState } from 'react'
 import TopNav from '../components/TopNav'
 import {
   createPauseType,
+  createSector,
   createUserWithEdgeFunction,
   listManagers,
   listPauseTypes,
   listProfiles,
+  listSectors,
   updatePauseType,
-  updateProfile
+  updateProfile,
+  updateSector
 } from '../services/apiAdmin'
 
 const emptyUserForm = {
@@ -19,30 +22,49 @@ const emptyUserForm = {
   team_id: ''
 }
 
+const minutesToTime = (minutes) => {
+  if (minutes === null || minutes === undefined || Number.isNaN(minutes)) return ''
+  const safeMinutes = Math.max(0, Number(minutes))
+  const hours = String(Math.floor(safeMinutes / 60)).padStart(2, '0')
+  const mins = String(safeMinutes % 60).padStart(2, '0')
+  return `${hours}:${mins}`
+}
+
+const timeToMinutes = (value) => {
+  if (!value) return null
+  const [h, m] = value.split(':').map(Number)
+  if (Number.isNaN(h) || Number.isNaN(m)) return null
+  return h * 60 + m
+}
+
 export default function Admin() {
   const [tab, setTab] = useState('users')
   const [profiles, setProfiles] = useState([])
   const [managers, setManagers] = useState([])
   const [pauseTypes, setPauseTypes] = useState([])
+  const [sectors, setSectors] = useState([])
   const [userForm, setUserForm] = useState(emptyUserForm)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [busy, setBusy] = useState(false)
-  const [newType, setNewType] = useState({ code: '', label: '' })
+  const [newType, setNewType] = useState({ code: '', label: '', limit_time: '' })
+  const [newSector, setNewSector] = useState({ code: '', label: '' })
 
   const refreshAll = async () => {
     setLoading(true)
     setError('')
     try {
-      const [profilesData, typesData, managersData] = await Promise.all([
+      const [profilesData, typesData, managersData, sectorsData] = await Promise.all([
         listProfiles(),
         listPauseTypes(),
-        listManagers()
+        listManagers(),
+        listSectors()
       ])
       setProfiles(profilesData)
       setPauseTypes(typesData)
       setManagers(managersData)
+      setSectors(sectorsData)
     } catch (err) {
       setError(err.message || 'Falha ao carregar dados')
     } finally {
@@ -98,7 +120,11 @@ export default function Admin() {
     setSuccess('')
     setBusy(true)
     try {
-      await updatePauseType(type.id, { label: type.label, is_active: type.is_active })
+      await updatePauseType(type.id, {
+        label: type.label,
+        is_active: type.is_active,
+        limit_minutes: type.limit_minutes ?? null
+      })
       setSuccess('Tipo atualizado.')
       await refreshAll()
     } catch (err) {
@@ -113,8 +139,13 @@ export default function Admin() {
     setSuccess('')
     setBusy(true)
     try {
-      await createPauseType({ code: newType.code, label: newType.label })
-      setNewType({ code: '', label: '' })
+      const limitMinutes = timeToMinutes(newType.limit_time)
+      await createPauseType({
+        code: newType.code,
+        label: newType.label,
+        limit_minutes: limitMinutes
+      })
+      setNewType({ code: '', label: '', limit_time: '' })
       setSuccess('Tipo criado.')
       await refreshAll()
     } catch (err) {
@@ -124,14 +155,62 @@ export default function Admin() {
     }
   }
 
+  const handleSectorUpdate = async (sector) => {
+    setError('')
+    setSuccess('')
+    setBusy(true)
+    try {
+      await updateSector(sector.id, { label: sector.label, is_active: sector.is_active })
+      setSuccess('Setor atualizado.')
+      await refreshAll()
+    } catch (err) {
+      setError(err.message || 'Falha ao atualizar setor')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleSectorCreate = async () => {
+    setError('')
+    setSuccess('')
+    setBusy(true)
+    try {
+      await createSector({ code: newSector.code, label: newSector.label })
+      setNewSector({ code: '', label: '' })
+      setSuccess('Setor criado.')
+      await refreshAll()
+    } catch (err) {
+      setError(err.message || 'Falha ao criar setor')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const updateProfileField = (id, field, value) => {
     setProfiles((prev) =>
-      prev.map((profile) => (profile.id === id ? { ...profile, [field]: value } : profile))
+      prev.map((profile) => {
+        if (profile.id !== id) return profile
+        const next = { ...profile, [field]: value }
+        if (field === 'role') {
+          if (value === 'ADMIN') {
+            next.manager_id = ''
+            next.team_id = ''
+          }
+          if (value === 'GERENTE') {
+            next.manager_id = ''
+          }
+        }
+        return next
+      })
     )
   }
 
   const updateTypeField = (id, field, value) => {
     setPauseTypes((prev) => prev.map((type) => (type.id === id ? { ...type, [field]: value } : type)))
+  }
+
+  const updateSectorField = (id, field, value) => {
+    setSectors((prev) => prev.map((sector) => (sector.id === id ? { ...sector, [field]: value } : sector)))
   }
 
   return (
@@ -157,6 +236,12 @@ export default function Admin() {
             onClick={() => setTab('pauseTypes')}
           >
             Tipos de pausa
+          </button>
+          <button
+            className={`btn ${tab === 'sectors' ? 'bg-brand-600 text-white' : 'btn-ghost'}`}
+            onClick={() => setTab('sectors')}
+          >
+            Setores
           </button>
         </div>
 
@@ -199,7 +284,15 @@ export default function Admin() {
                   <select
                     className="input mt-1"
                     value={userForm.role}
-                    onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}
+                    onChange={(e) => {
+                      const nextRole = e.target.value
+                      setUserForm((prev) => ({
+                        ...prev,
+                        role: nextRole,
+                        manager_id: nextRole === 'AGENTE' ? prev.manager_id : '',
+                        team_id: nextRole === 'ADMIN' ? '' : prev.team_id
+                      }))
+                    }}
                   >
                     <option value="ADMIN">ADMIN</option>
                     <option value="GERENTE">GERENTE</option>
@@ -211,7 +304,17 @@ export default function Admin() {
                   <select
                     className="input mt-1"
                     value={userForm.manager_id}
-                    onChange={(e) => setUserForm({ ...userForm, manager_id: e.target.value })}
+                    onChange={(e) => {
+                      const nextManagerId = e.target.value
+                      const manager = managers.find((item) => item.id === nextManagerId)
+                      setUserForm((prev) => ({
+                        ...prev,
+                        manager_id: nextManagerId,
+                        team_id: manager?.team_id || prev.team_id || ''
+                      }))
+                    }}
+                    disabled={userForm.role !== 'AGENTE'}
+                    required={userForm.role === 'AGENTE'}
                   >
                     <option value="">Nenhum</option>
                     {managers.map((manager) => (
@@ -222,13 +325,21 @@ export default function Admin() {
                   </select>
                 </div>
                 <div>
-                  <label className="label">Team ID</label>
-                  <input
+                  <label className="label">Setor</label>
+                  <select
                     className="input mt-1"
                     value={userForm.team_id}
                     onChange={(e) => setUserForm({ ...userForm, team_id: e.target.value })}
-                    placeholder="Opcional"
-                  />
+                    disabled={userForm.role === 'ADMIN'}
+                    required={userForm.role === 'GERENTE'}
+                  >
+                    <option value="">Nenhum</option>
+                    {sectors.map((sector) => (
+                      <option key={sector.id} value={sector.id}>
+                        {sector.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <button className="btn-primary w-full" type="submit" disabled={busy}>
                   {busy ? 'Criando...' : 'Criar usuario'}
@@ -248,7 +359,7 @@ export default function Admin() {
                       <th className="text-left py-2">Nome</th>
                       <th className="text-left py-2">Role</th>
                       <th className="text-left py-2">Manager</th>
-                      <th className="text-left py-2">Team</th>
+                      <th className="text-left py-2">Setor</th>
                       <th className="text-left py-2">Acoes</th>
                     </tr>
                   </thead>
@@ -278,6 +389,7 @@ export default function Admin() {
                             className="input"
                             value={profile.manager_id || ''}
                             onChange={(e) => updateProfileField(profile.id, 'manager_id', e.target.value)}
+                            disabled={profile.role !== 'AGENTE'}
                           >
                             <option value="">Nenhum</option>
                             {managers.map((manager) => (
@@ -288,12 +400,19 @@ export default function Admin() {
                           </select>
                         </td>
                         <td className="py-2">
-                          <input
+                          <select
                             className="input"
                             value={profile.team_id || ''}
                             onChange={(e) => updateProfileField(profile.id, 'team_id', e.target.value)}
-                            placeholder="Opcional"
-                          />
+                            disabled={profile.role === 'ADMIN'}
+                          >
+                            <option value="">Nenhum</option>
+                            {sectors.map((sector) => (
+                              <option key={sector.id} value={sector.id}>
+                                {sector.label}
+                              </option>
+                            ))}
+                          </select>
                         </td>
                         <td className="py-2">
                           <button
@@ -342,6 +461,16 @@ export default function Admin() {
                     onChange={(e) => setNewType({ ...newType, label: e.target.value })}
                   />
                 </div>
+                <div>
+                  <label className="label">Tempo limite (hh:mm)</label>
+                  <input
+                    className="input mt-1"
+                    type="time"
+                    step="60"
+                    value={newType.limit_time}
+                    onChange={(e) => setNewType({ ...newType, limit_time: e.target.value })}
+                  />
+                </div>
                 <button className="btn-primary w-full" type="button" onClick={handleTypeCreate} disabled={busy}>
                   {busy ? 'Salvando...' : 'Criar tipo'}
                 </button>
@@ -355,6 +484,7 @@ export default function Admin() {
                     <tr>
                       <th className="text-left py-2">Codigo</th>
                       <th className="text-left py-2">Label</th>
+                      <th className="text-left py-2">Tempo limite</th>
                       <th className="text-left py-2">Ativo</th>
                       <th className="text-left py-2">Acoes</th>
                     </tr>
@@ -368,6 +498,17 @@ export default function Admin() {
                             className="input"
                             value={type.label}
                             onChange={(e) => updateTypeField(type.id, 'label', e.target.value)}
+                          />
+                        </td>
+                        <td className="py-2">
+                          <input
+                            className="input"
+                            type="time"
+                            step="60"
+                            value={minutesToTime(type.limit_minutes)}
+                            onChange={(e) =>
+                              updateTypeField(type.id, 'limit_minutes', timeToMinutes(e.target.value))
+                            }
                           />
                         </td>
                         <td className="py-2">
@@ -394,8 +535,93 @@ export default function Admin() {
                     ))}
                     {!pauseTypes.length ? (
                       <tr>
-                        <td className="py-3 text-slate-500" colSpan="4">
+                        <td className="py-3 text-slate-500" colSpan="5">
                           Nenhum tipo cadastrado.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {tab === 'sectors' ? (
+          <div className="grid gap-6 lg:grid-cols-[2fr_3fr]">
+            <div className="card">
+              <h2 className="font-display text-xl font-semibold text-slate-900">Criar setor</h2>
+              <div className="mt-4 space-y-3">
+                <div>
+                  <label className="label">Codigo</label>
+                  <input
+                    className="input mt-1"
+                    value={newSector.code}
+                    onChange={(e) => setNewSector({ ...newSector, code: e.target.value.toUpperCase() })}
+                  />
+                </div>
+                <div>
+                  <label className="label">Label</label>
+                  <input
+                    className="input mt-1"
+                    value={newSector.label}
+                    onChange={(e) => setNewSector({ ...newSector, label: e.target.value })}
+                  />
+                </div>
+                <button className="btn-primary w-full" type="button" onClick={handleSectorCreate} disabled={busy}>
+                  {busy ? 'Salvando...' : 'Criar setor'}
+                </button>
+              </div>
+            </div>
+            <div className="card">
+              <h2 className="font-display text-xl font-semibold text-slate-900">Setores cadastrados</h2>
+              <div className="mt-4 overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead className="text-slate-500">
+                    <tr>
+                      <th className="text-left py-2">Codigo</th>
+                      <th className="text-left py-2">Label</th>
+                      <th className="text-left py-2">Ativo</th>
+                      <th className="text-left py-2">Acoes</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-slate-900">
+                    {sectors.map((sector) => (
+                      <tr key={sector.id} className="border-t border-slate-100">
+                        <td className="py-2">{sector.code}</td>
+                        <td className="py-2">
+                          <input
+                            className="input"
+                            value={sector.label}
+                            onChange={(e) => updateSectorField(sector.id, 'label', e.target.value)}
+                          />
+                        </td>
+                        <td className="py-2">
+                          <select
+                            className="input"
+                            value={sector.is_active ? 'true' : 'false'}
+                            onChange={(e) => updateSectorField(sector.id, 'is_active', e.target.value === 'true')}
+                          >
+                            <option value="true">Ativo</option>
+                            <option value="false">Inativo</option>
+                          </select>
+                        </td>
+                        <td className="py-2">
+                          <button
+                            className="btn-ghost"
+                            type="button"
+                            onClick={() => handleSectorUpdate(sector)}
+                            disabled={busy}
+                          >
+                            Salvar
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {!sectors.length ? (
+                      <tr>
+                        <td className="py-3 text-slate-500" colSpan="4">
+                          Nenhum setor cadastrado.
                         </td>
                       </tr>
                     ) : null}

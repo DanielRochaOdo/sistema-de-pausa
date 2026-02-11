@@ -22,8 +22,8 @@ export async function listAgents() {
 export async function listManagers() {
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, full_name, role')
-    .in('role', ['GERENTE', 'ADMIN'])
+    .select('id, full_name, role, team_id')
+    .in('role', ['GERENTE'])
     .order('full_name', { ascending: true })
   if (error) throw error
   return data
@@ -49,6 +49,15 @@ export async function listPauseTypes() {
   return data
 }
 
+export async function listSectors() {
+  const { data, error } = await supabase
+    .from('sectors')
+    .select('id, code, label, is_active')
+    .order('label', { ascending: true })
+  if (error) throw error
+  return data
+}
+
 export async function createPauseType(payload) {
   const { data, error } = await supabase.from('pause_types').insert(payload).select().single()
   if (error) throw error
@@ -58,6 +67,23 @@ export async function createPauseType(payload) {
 export async function updatePauseType(id, updates) {
   const { data, error } = await supabase
     .from('pause_types')
+    .update(updates)
+    .eq('id', id)
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
+export async function createSector(payload) {
+  const { data, error } = await supabase.from('sectors').insert(payload).select().single()
+  if (error) throw error
+  return data
+}
+
+export async function updateSector(id, updates) {
+  const { data, error } = await supabase
+    .from('sectors')
     .update(updates)
     .eq('id', id)
     .select()

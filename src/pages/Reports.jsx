@@ -1,28 +1,36 @@
 import { useEffect, useState } from 'react'
 import TopNav from '../components/TopNav'
 import { fetchPauses } from '../services/apiReports'
-import { listAgents } from '../services/apiAdmin'
+import { listAgents, listSectors } from '../services/apiAdmin'
 import { getPauseTypes } from '../services/apiPauses'
-import { downloadCsv, toCsv } from '../utils/csv'
+import { exportCsv, exportPdf, exportXlsx } from '../utils/export'
 import { formatDateTime, formatDuration, formatInputDate, startOfMonth } from '../utils/format'
 
 export default function Reports() {
   const [agents, setAgents] = useState([])
   const [pauseTypes, setPauseTypes] = useState([])
+  const [sectors, setSectors] = useState([])
   const [fromDate, setFromDate] = useState(formatInputDate(startOfMonth()))
   const [toDate, setToDate] = useState(formatInputDate(new Date()))
   const [agentId, setAgentId] = useState('')
   const [pauseTypeId, setPauseTypeId] = useState('')
+  const [sectorId, setSectorId] = useState('')
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [exportOpen, setExportOpen] = useState(false)
 
   useEffect(() => {
     const init = async () => {
       try {
-        const [agentsData, typesData] = await Promise.all([listAgents(), getPauseTypes(false)])
+        const [agentsData, typesData, sectorsData] = await Promise.all([
+          listAgents(),
+          getPauseTypes(false),
+          listSectors()
+        ])
         setAgents(agentsData)
         setPauseTypes(typesData)
+        setSectors(sectorsData)
       } catch (err) {
         console.error(err)
       }
@@ -38,7 +46,8 @@ export default function Reports() {
         from: fromDate,
         to: toDate,
         agentId: agentId || null,
-        pauseTypeId: pauseTypeId || null
+        pauseTypeId: pauseTypeId || null,
+        sectorId: sectorId || null
       })
       setRows(data || [])
     } catch (err) {
@@ -50,21 +59,36 @@ export default function Reports() {
 
   useEffect(() => {
     loadReport()
-  }, [fromDate, toDate, agentId, pauseTypeId])
+  }, [fromDate, toDate, agentId, pauseTypeId, sectorId])
 
-  const handleExport = () => {
+  const formatLimit = (minutes) => {
+    if (minutes === null || minutes === undefined) return ''
+    const safeMinutes = Math.max(0, Number(minutes))
+    const hours = String(Math.floor(safeMinutes / 60)).padStart(2, '0')
+    const mins = String(safeMinutes % 60).padStart(2, '0')
+    return `${hours}:${mins}`
+  }
+
+  const handleExport = (format) => {
     if (!rows.length) return
+    const sectorMap = new Map(sectors.map((sector) => [sector.id, sector.label]))
     const mapped = rows.map((row) => ({
       agente: row.profiles?.full_name,
+      setor: sectorMap.get(row.profiles?.team_id) || '',
       tipo: row.pause_types?.label,
+      tempo_limite: formatLimit(row.pause_types?.limit_minutes),
       inicio: formatDateTime(row.started_at),
       fim: formatDateTime(row.ended_at),
       duracao: formatDuration(row.duration_seconds || 0),
+      atraso: row.atraso ? 'Sim' : 'Nao',
       notas: row.notes || ''
     }))
 
-    const csv = toCsv(mapped)
-    downloadCsv(csv, `relatorio-pausas-${fromDate}-a-${toDate}.csv`)
+    const baseName = `relatorio-pausas-${fromDate}-a-${toDate}`
+    if (format === 'csv') exportCsv(mapped, `${baseName}.csv`)
+    if (format === 'xlsx') exportXlsx(mapped, `${baseName}.xlsx`)
+    if (format === 'pdf') exportPdf(mapped, `${baseName}.pdf`, 'Relatorio de Pausas')
+    setExportOpen(false)
   }
 
   return (
@@ -77,8 +101,8 @@ export default function Reports() {
 
         <div className="card">
           <h2 className="font-display text-xl font-semibold text-slate-900">Relatorios</h2>
-          <p className="text-sm text-slate-600 mt-1">Exporte CSV por periodo, agente e tipo.</p>
-          <div className="mt-4 grid gap-4 md:grid-cols-5">
+          <p className="text-sm text-slate-600 mt-1">Exporte por periodo, agente, tipo e setor.</p>
+          <div className="mt-4 grid gap-4 md:grid-cols-6">
             <div>
               <label className="label">De</label>
               <input className="input mt-1" type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
@@ -109,10 +133,40 @@ export default function Reports() {
                 ))}
               </select>
             </div>
+            <div>
+              <label className="label">Setor</label>
+              <select className="input mt-1" value={sectorId} onChange={(e) => setSectorId(e.target.value)}>
+                <option value="">Todos</option>
+                {sectors.map((sector) => (
+                  <option key={sector.id} value={sector.id}>
+                    {sector.label}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div className="flex items-end">
-              <button className="btn-primary w-full" onClick={handleExport} disabled={!rows.length || loading}>
-                Baixar CSV
-              </button>
+              <div className="w-full">
+                <button
+                  className="btn-primary w-full"
+                  onClick={() => setExportOpen((prev) => !prev)}
+                  disabled={!rows.length || loading}
+                >
+                  Exportar
+                </button>
+                {exportOpen ? (
+                  <div className="mt-2 w-full rounded-xl border border-slate-200 bg-white shadow-lg">
+                    <button className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => handleExport('csv')}>
+                      CSV
+                    </button>
+                    <button className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => handleExport('xlsx')}>
+                      XLSX
+                    </button>
+                    <button className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => handleExport('pdf')}>
+                      PDF
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
         </div>
@@ -135,9 +189,17 @@ export default function Reports() {
               </thead>
               <tbody className="text-slate-900">
                 {rows.map((row) => (
-                  <tr key={row.id} className="border-t border-slate-100">
+                  <tr
+                    key={row.id}
+                    className={`border-t border-slate-100 ${row.atraso ? 'bg-amber-50' : ''}`}
+                  >
                     <td className="py-2">{row.profiles?.full_name}</td>
-                    <td className="py-2">{row.pause_types?.label}</td>
+                    <td className="py-2">
+                      <div className="flex items-center gap-2">
+                        <span>{row.pause_types?.label}</span>
+                        {row.atraso ? <span className="chip bg-amber-100 text-amber-700">Atraso</span> : null}
+                      </div>
+                    </td>
                     <td className="py-2">{formatDateTime(row.started_at)}</td>
                     <td className="py-2">{formatDateTime(row.ended_at)}</td>
                     <td className="py-2">{formatDuration(row.duration_seconds || 0)}</td>

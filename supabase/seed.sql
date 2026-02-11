@@ -1,6 +1,12 @@
 -- Seed: 2 managers with 3 agents each
 -- Password for all users: 131045
 
+insert into public.sectors (id, code, label, is_active)
+values
+  ('30000000-0000-0000-0000-000000000001', 'SETOR1', 'Setor 1', true),
+  ('30000000-0000-0000-0000-000000000002', 'SETOR2', 'Setor 2', true)
+on conflict (id) do nothing;
+
 do $$
 declare
   v_instance_id uuid := (select id from auth.instances limit 1);
@@ -234,6 +240,25 @@ where id in (
 update public.profiles
 set manager_id = '20000000-0000-0000-0000-000000000002'
 where id in (
+  '20000000-0000-0000-0000-000000000101',
+  '20000000-0000-0000-0000-000000000102',
+  '20000000-0000-0000-0000-000000000103'
+);
+
+-- Link managers and agents to their sectors
+update public.profiles
+set team_id = '30000000-0000-0000-0000-000000000001'
+where id in (
+  '10000000-0000-0000-0000-000000000001',
+  '10000000-0000-0000-0000-000000000101',
+  '10000000-0000-0000-0000-000000000102',
+  '10000000-0000-0000-0000-000000000103'
+);
+
+update public.profiles
+set team_id = '30000000-0000-0000-0000-000000000002'
+where id in (
+  '20000000-0000-0000-0000-000000000002',
   '20000000-0000-0000-0000-000000000101',
   '20000000-0000-0000-0000-000000000102',
   '20000000-0000-0000-0000-000000000103'

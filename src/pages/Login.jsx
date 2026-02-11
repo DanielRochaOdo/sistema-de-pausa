@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/useAuth'
 export default function Login() {
   const { session, profile, loading, signIn, signOut, refreshProfile, error } = useAuth()
   const navigate = useNavigate()
-  const [email, setEmail] = useState('')
+  const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [localError, setLocalError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -23,7 +23,7 @@ export default function Login() {
     setLocalError('')
     setBusy(true)
     try {
-      await signIn(email, password)
+      await signIn(identifier, password)
     } catch (err) {
       setLocalError(err.message || 'Falha no login')
     } finally {
@@ -36,17 +36,17 @@ export default function Login() {
       <div className="w-full max-w-md card animate-fade-in">
         <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Controle de Pausas</p>
         <h1 className="font-display text-3xl font-semibold text-slate-900 mt-2">Bem-vindo de volta</h1>
-        <p className="text-sm text-slate-600 mt-2">Entre com seu e-mail corporativo para registrar suas pausas.</p>
+        <p className="text-sm text-slate-600 mt-2">Entre com seu e-mail ou nome completo para registrar suas pausas.</p>
 
         <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
           <div>
-            <label className="label">Email</label>
+            <label className="label">Email ou nome completo</label>
             <input
               className="input mt-1"
-              type="email"
+              type="text"
               required
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              value={identifier}
+              onChange={(event) => setIdentifier(event.target.value)}
             />
           </div>
           <div>

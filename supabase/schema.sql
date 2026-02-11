@@ -5,6 +5,7 @@ create extension if not exists "pgcrypto";
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   full_name text not null,
+  email text null,
   role text not null check (role in ('ADMIN', 'GERENTE', 'AGENTE')),
   team_id uuid null,
   manager_id uuid null,
@@ -17,11 +18,25 @@ alter table public.profiles
   add constraint profiles_manager_fk
   foreign key (manager_id) references public.profiles(id) on delete set null;
 
+create table if not exists public.sectors (
+  id uuid primary key default gen_random_uuid(),
+  code text unique not null,
+  label text not null,
+  is_active boolean default true,
+  created_at timestamptz default now()
+);
+
+alter table public.profiles drop constraint if exists profiles_team_fk;
+alter table public.profiles
+  add constraint profiles_team_fk
+  foreign key (team_id) references public.sectors(id) on delete set null;
+
 create table if not exists public.pause_types (
   id uuid primary key default gen_random_uuid(),
   code text unique not null,
   label text not null,
-  is_active boolean default true
+  is_active boolean default true,
+  limit_minutes int null
 );
 
 create table if not exists public.pauses (
@@ -31,6 +46,7 @@ create table if not exists public.pauses (
   started_at timestamptz not null default now(),
   ended_at timestamptz null,
   duration_seconds int null,
+  atraso boolean default false,
   notes text null,
   created_at timestamptz default now()
 );
@@ -47,6 +63,12 @@ create index if not exists pauses_type_idx
 
 create index if not exists pause_types_code_idx
   on public.pause_types(code);
+
+create unique index if not exists profiles_email_lower_unique
+  on public.profiles (lower(email));
+
+create index if not exists profiles_full_name_lower_idx
+  on public.profiles (lower(full_name));
 
 create or replace view public.daily_pause_summary as
 select
@@ -118,7 +140,7 @@ security definer
 set search_path = public, auth
 as $$
 begin
-  insert into public.profiles (id, full_name, role)
+  insert into public.profiles (id, full_name, role, email)
   values (
     new.id,
     coalesce(new.raw_user_meta_data->>'full_name', new.email, 'Novo usuario'),
@@ -126,9 +148,11 @@ begin
       when new.raw_app_meta_data->>'role' in ('ADMIN', 'GERENTE', 'AGENTE')
         then new.raw_app_meta_data->>'role'
       else 'AGENTE'
-    end
+    end,
+    new.email
   )
-  on conflict (id) do nothing;
+  on conflict (id) do update set
+    email = excluded.email;
   return new;
 end;
 $$;
@@ -167,6 +191,61 @@ drop trigger if exists profiles_update_guard on public.profiles;
 create trigger profiles_update_guard
   before update on public.profiles
   for each row execute procedure public.guard_profile_update();
+
+create or replace function public.enforce_profile_hierarchy()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  v_manager_role text;
+  v_manager_team uuid;
+begin
+  if auth.uid() is null then
+    return new;
+  end if;
+
+  if new.role = 'ADMIN' then
+    new.manager_id := null;
+    new.team_id := null;
+    return new;
+  end if;
+
+  if new.role = 'GERENTE' then
+    new.manager_id := null;
+    if new.team_id is null then
+      raise exception 'manager_requires_sector';
+    end if;
+    return new;
+  end if;
+
+  if new.role = 'AGENTE' then
+    if new.manager_id is null then
+      raise exception 'agent_requires_manager';
+    end if;
+
+    select role, team_id into v_manager_role, v_manager_team
+    from public.profiles
+    where id = new.manager_id;
+
+    if v_manager_role is distinct from 'GERENTE' then
+      raise exception 'invalid_manager_role';
+    end if;
+
+    if new.team_id is null then
+      new.team_id := v_manager_team;
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists profiles_hierarchy_guard on public.profiles;
+create trigger profiles_hierarchy_guard
+  before insert or update on public.profiles
+  for each row execute procedure public.enforce_profile_hierarchy();
 
 create or replace function public.guard_pause_update()
 returns trigger
@@ -262,6 +341,8 @@ declare
   v_pause_id uuid;
   v_started timestamptz;
   v_duration int;
+  v_limit_minutes int;
+  v_is_late boolean;
 begin
   v_role := public.current_role();
   if v_role <> 'AGENTE' then
@@ -280,10 +361,21 @@ begin
 
   v_duration := extract(epoch from (now() - v_started))::int;
 
+  select pt.limit_minutes into v_limit_minutes
+  from public.pauses p
+  join public.pause_types pt on pt.id = p.pause_type_id
+  where p.id = v_pause_id;
+
+  v_is_late := false;
+  if v_limit_minutes is not null and v_limit_minutes > 0 then
+    v_is_late := v_duration > (v_limit_minutes * 60);
+  end if;
+
   update public.pauses
   set ended_at = now(),
       duration_seconds = v_duration,
-      notes = coalesce(p_notes, notes)
+      notes = coalesce(p_notes, notes),
+      atraso = v_is_late
   where id = v_pause_id;
 
   return v_pause_id;
@@ -291,12 +383,14 @@ end;
 $$;
 
 drop function if exists public.list_dashboard(date, date, uuid, uuid);
+drop function if exists public.list_dashboard(date, date, uuid, uuid, uuid);
 
 create or replace function public.list_dashboard(
   p_from date,
   p_to date,
   p_agent_id uuid default null,
-  p_pause_type_id uuid default null
+  p_pause_type_id uuid default null,
+  p_team_id uuid default null
 )
 returns table (
   agent_id uuid,
@@ -335,6 +429,7 @@ begin
     and p.started_at::date between p_from and p_to
     and (p_agent_id is null or p.agent_id = p_agent_id)
     and (p_pause_type_id is null or p.pause_type_id = p_pause_type_id)
+    and (p_team_id is null or pr.team_id = p_team_id)
     and (
       v_role = 'ADMIN'
       or (
@@ -348,6 +443,7 @@ end;
 $$;
 
 alter table public.profiles enable row level security;
+alter table public.sectors enable row level security;
 alter table public.pause_types enable row level security;
 alter table public.pauses enable row level security;
 
@@ -408,6 +504,28 @@ create policy "Pause types: admin delete"
   on public.pause_types for delete
   using (public.is_admin(auth.uid()));
 
+-- Sectors policies
+drop policy if exists "Sectors: select authenticated" on public.sectors;
+drop policy if exists "Sectors: admin write" on public.sectors;
+drop policy if exists "Sectors: admin update" on public.sectors;
+drop policy if exists "Sectors: admin delete" on public.sectors;
+
+create policy "Sectors: select authenticated"
+  on public.sectors for select
+  using (auth.role() = 'authenticated');
+
+create policy "Sectors: admin write"
+  on public.sectors for insert
+  with check (public.is_admin(auth.uid()));
+
+create policy "Sectors: admin update"
+  on public.sectors for update
+  using (public.is_admin(auth.uid()))
+  with check (public.is_admin(auth.uid()));
+
+create policy "Sectors: admin delete"
+  on public.sectors for delete
+  using (public.is_admin(auth.uid()));
 -- Pauses policies
 drop policy if exists "Pauses: agent insert" on public.pauses;
 drop policy if exists "Pauses: select by role" on public.pauses;
