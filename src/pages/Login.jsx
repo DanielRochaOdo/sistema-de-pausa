@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useAuth } from '../contexts/AuthContext'
+import { useAuth } from '../contexts/useAuth'
 
 export default function Login() {
-  const { session, profile, loading, signIn, signOut, refreshProfile } = useAuth()
+  const { session, profile, loading, signIn, signOut, refreshProfile, error } = useAuth()
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
+  const [localError, setLocalError] = useState('')
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
@@ -20,12 +20,12 @@ export default function Login() {
 
   const handleSubmit = async (event) => {
     event.preventDefault()
-    setError('')
+    setLocalError('')
     setBusy(true)
     try {
       await signIn(email, password)
     } catch (err) {
-      setError(err.message || 'Falha no login')
+      setLocalError(err.message || 'Falha no login')
     } finally {
       setBusy(false)
     }
@@ -69,9 +69,9 @@ export default function Login() {
             </div>
           ) : null}
 
-          {error ? (
+          {(localError || error) ? (
             <div className="rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
-              {error}
+              {localError || error}
             </div>
           ) : null}
 

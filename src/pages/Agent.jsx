@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import TopNav from '../components/TopNav'
 import StatCard from '../components/StatCard'
-import { useAuth } from '../contexts/AuthContext'
+import { useAuth } from '../contexts/useAuth'
 import { endPause, getActivePause, getPauseTypes, listRecentPauses, startPause } from '../services/apiPauses'
 import { formatDateTime, formatDuration } from '../utils/format'
 import { friendlyError } from '../utils/errors'

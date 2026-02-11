@@ -1,4 +1,4 @@
-import { supabase } from './supabaseClient'
+ï»¿import { supabase } from './supabaseClient'
 
 export async function listProfiles() {
   const { data, error } = await supabase
@@ -66,22 +66,10 @@ export async function updatePauseType(id, updates) {
   return data
 }
 
-export async function createUserWithEdgeFunction(payload, accessToken) {
-  if (!accessToken) throw new Error('Sessao invalida. Faça login novamente.')
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-  const response = await fetch(`${supabaseUrl}/functions/v1/admin-create-user`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`
-    },
-    body: JSON.stringify(payload)
+export async function createUserWithEdgeFunction(payload) {
+  const { data, error } = await supabase.functions.invoke('admin-create-user', {
+    body: payload
   })
-
-  const data = await response.json().catch(() => ({}))
-  if (!response.ok) {
-    throw new Error(data?.error || 'Falha ao criar usuario')
-  }
-
+  if (error) throw error
   return data
 }

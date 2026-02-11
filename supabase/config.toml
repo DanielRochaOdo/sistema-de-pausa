@@ -33,4 +33,4 @@ file_size_limit = "50MiB"
 [functions]
 
 [functions.admin-create-user]
-verify_jwt = true
+verify_jwt = false

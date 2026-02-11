@@ -70,7 +70,35 @@ stable
 security definer
 set search_path = public, auth
 as $$
-  select coalesce(auth.jwt()->'app_metadata'->>'role', 'AGENTE');
+  select coalesce(
+    (select role from public.profiles where id = auth.uid()),
+    auth.jwt()->'app_metadata'->>'role',
+    'AGENTE'
+  );
+$$;
+
+create or replace function public.is_admin(p_uid uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, auth
+as $$
+  select exists (
+    select 1 from public.profiles where id = p_uid and role = 'ADMIN'
+  );
+$$;
+
+create or replace function public.is_manager(p_uid uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, auth
+as $$
+  select exists (
+    select 1 from public.profiles where id = p_uid and role = 'GERENTE'
+  );
 $$;
 
 create or replace function public.current_team_id()
@@ -333,9 +361,9 @@ create policy "Profiles: select own or manager/admin"
   on public.profiles for select
   using (
     id = auth.uid()
-    or public.current_role() = 'ADMIN'
+    or public.is_admin(auth.uid())
     or (
-      public.current_role() = 'GERENTE'
+      public.is_manager(auth.uid())
       and role = 'AGENTE'
       and (
         manager_id = auth.uid()
@@ -346,16 +374,16 @@ create policy "Profiles: select own or manager/admin"
 
 create policy "Profiles: update own or admin"
   on public.profiles for update
-  using (id = auth.uid() or public.current_role() = 'ADMIN')
-  with check (id = auth.uid() or public.current_role() = 'ADMIN');
+  using (id = auth.uid() or public.is_admin(auth.uid()))
+  with check (id = auth.uid() or public.is_admin(auth.uid()));
 
 create policy "Profiles: admin insert"
   on public.profiles for insert
-  with check (public.current_role() = 'ADMIN');
+  with check (public.is_admin(auth.uid()));
 
 create policy "Profiles: admin delete"
   on public.profiles for delete
-  using (public.current_role() = 'ADMIN');
+  using (public.is_admin(auth.uid()));
 
 -- Pause types policies
 drop policy if exists "Pause types: select authenticated" on public.pause_types;
@@ -369,16 +397,16 @@ create policy "Pause types: select authenticated"
 
 create policy "Pause types: admin write"
   on public.pause_types for insert
-  with check (public.current_role() = 'ADMIN');
+  with check (public.is_admin(auth.uid()));
 
 create policy "Pause types: admin update"
   on public.pause_types for update
-  using (public.current_role() = 'ADMIN')
-  with check (public.current_role() = 'ADMIN');
+  using (public.is_admin(auth.uid()))
+  with check (public.is_admin(auth.uid()));
 
 create policy "Pause types: admin delete"
   on public.pause_types for delete
-  using (public.current_role() = 'ADMIN');
+  using (public.is_admin(auth.uid()));
 
 -- Pauses policies
 drop policy if exists "Pauses: agent insert" on public.pauses;
@@ -387,13 +415,16 @@ drop policy if exists "Pauses: agent end own active" on public.pauses;
 
 create policy "Pauses: agent insert"
   on public.pauses for insert
-  with check (agent_id = auth.uid() and public.current_role() = 'AGENTE');
+  with check (
+    (public.current_role() = 'AGENTE' and agent_id = auth.uid())
+    or public.is_admin(auth.uid())
+  );
 
 create policy "Pauses: select by role"
   on public.pauses for select
   using (
-    public.current_role() = 'ADMIN'
-    or (public.current_role() = 'GERENTE' and exists (
+    public.is_admin(auth.uid())
+    or (public.is_manager(auth.uid()) and exists (
       select 1 from public.profiles pr
       where pr.id = pauses.agent_id
         and (pr.manager_id = auth.uid() or (pr.team_id is not null and pr.team_id = public.current_team_id()))
@@ -405,10 +436,10 @@ create policy "Pauses: agent end own active"
   on public.pauses for update
   using (
     (public.current_role() = 'AGENTE' and agent_id = auth.uid() and ended_at is null)
-    or public.current_role() = 'ADMIN'
+    or public.is_admin(auth.uid())
   )
   with check (
-    public.current_role() = 'ADMIN'
+    public.is_admin(auth.uid())
     or agent_id = auth.uid()
   );
 

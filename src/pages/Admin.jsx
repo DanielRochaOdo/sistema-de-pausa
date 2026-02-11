@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import TopNav from '../components/TopNav'
-import { useAuth } from '../contexts/AuthContext'
 import {
   createPauseType,
   createUserWithEdgeFunction,
@@ -21,7 +20,6 @@ const emptyUserForm = {
 }
 
 export default function Admin() {
-  const { session } = useAuth()
   const [tab, setTab] = useState('users')
   const [profiles, setProfiles] = useState([])
   const [managers, setManagers] = useState([])
@@ -62,7 +60,7 @@ export default function Admin() {
     setSuccess('')
     setBusy(true)
     try {
-      await createUserWithEdgeFunction(userForm, session?.access_token)
+      await createUserWithEdgeFunction(userForm)
       setSuccess('Usuario criado com sucesso.')
       setUserForm(emptyUserForm)
       await refreshAll()
@@ -148,7 +146,10 @@ export default function Admin() {
         ) : null}
 
         <div className="flex gap-2">
-          <button className={`btn ${tab === 'users' ? 'bg-brand-600 text-white' : 'btn-ghost'}`} onClick={() => setTab('users')}>
+          <button
+            className={`btn ${tab === 'users' ? 'bg-brand-600 text-white' : 'btn-ghost'}`}
+            onClick={() => setTab('users')}
+          >
             Usuarios
           </button>
           <button
@@ -167,7 +168,12 @@ export default function Admin() {
               <form className="mt-4 space-y-3" onSubmit={handleCreateUser}>
                 <div>
                   <label className="label">Email</label>
-                  <input className="input mt-1" value={userForm.email} onChange={(e) => setUserForm({ ...userForm, email: e.target.value })} required />
+                  <input
+                    className="input mt-1"
+                    value={userForm.email}
+                    onChange={(e) => setUserForm({ ...userForm, email: e.target.value })}
+                    required
+                  />
                 </div>
                 <div>
                   <label className="label">Senha provisoria</label>
@@ -290,7 +296,12 @@ export default function Admin() {
                           />
                         </td>
                         <td className="py-2">
-                          <button className="btn-ghost" type="button" onClick={() => handleUpdate(profile)} disabled={busy}>
+                          <button
+                            className="btn-ghost"
+                            type="button"
+                            onClick={() => handleUpdate(profile)}
+                            disabled={busy}
+                          >
                             Salvar
                           </button>
                         </td>
@@ -370,7 +381,12 @@ export default function Admin() {
                           </select>
                         </td>
                         <td className="py-2">
-                          <button className="btn-ghost" type="button" onClick={() => handleTypeUpdate(type)} disabled={busy}>
+                          <button
+                            className="btn-ghost"
+                            type="button"
+                            onClick={() => handleTypeUpdate(type)}
+                            disabled={busy}
+                          >
                             Salvar
                           </button>
                         </td>
