@@ -70,7 +70,8 @@ serve(async (req) => {
     return jsonResponse(400, { error: 'Invalid JSON body' })
   }
 
-  const { email, password, full_name, role, manager_id, team_id } = body as Record<string, unknown>
+  const { email, password, full_name, role, manager_id, team_id, sector_ids } =
+    body as Record<string, unknown>
 
   if (!email || !password || !full_name || !role) {
     return jsonResponse(400, { error: 'Missing required fields' })
@@ -85,6 +86,9 @@ serve(async (req) => {
 
   const normalizedManagerId = typeof manager_id === 'string' && manager_id ? manager_id : null
   const providedTeamId = typeof team_id === 'string' && team_id ? team_id : null
+  const providedSectorIds = Array.isArray(sector_ids)
+    ? sector_ids.filter((id) => typeof id === 'string' && id)
+    : []
   let resolvedTeamId = providedTeamId
 
   if (role === 'AGENTE') {
@@ -102,8 +106,21 @@ serve(async (req) => {
     if (managerProfile.role !== 'GERENTE') {
       return jsonResponse(400, { error: 'Manager must be GERENTE' })
     }
+    const { data: managerSectors, error: managerSectorsError } = await adminClient
+      .from('manager_sectors')
+      .select('sector_id')
+      .eq('manager_id', normalizedManagerId)
+    if (managerSectorsError) {
+      return jsonResponse(400, { error: managerSectorsError.message || 'Failed to load manager sectors' })
+    }
+    const allowedSectors = new Set([
+      ...(managerSectors || []).map((row) => row.sector_id),
+      managerProfile.team_id
+    ].filter(Boolean))
     if (!resolvedTeamId) {
       resolvedTeamId = managerProfile.team_id ?? null
+    } else if (!allowedSectors.has(resolvedTeamId)) {
+      return jsonResponse(400, { error: 'Setor invalido para o gerente selecionado' })
     }
   }
 
@@ -111,7 +128,10 @@ serve(async (req) => {
     if (normalizedManagerId) {
       return jsonResponse(400, { error: 'Gerente nao pode ter gerente' })
     }
-    if (!resolvedTeamId) {
+    if (!resolvedTeamId && providedSectorIds.length) {
+      resolvedTeamId = providedSectorIds[0]
+    }
+    if (!resolvedTeamId && !providedSectorIds.length) {
       return jsonResponse(400, { error: 'Gerente precisa de setor' })
     }
   }
@@ -153,6 +173,24 @@ serve(async (req) => {
       error: insertError.message || 'Failed to create profile',
       code: insertError.code || null
     })
+  }
+
+  if (role === 'GERENTE') {
+    const uniqueSectorIds = Array.from(
+      new Set([resolvedTeamId, ...providedSectorIds].filter(Boolean))
+    )
+    if (uniqueSectorIds.length) {
+      const rows = uniqueSectorIds.map((sectorId) => ({
+        manager_id: created.user.id,
+        sector_id: sectorId
+      }))
+      const { error: managerSectorError } = await adminClient
+        .from('manager_sectors')
+        .upsert(rows, { onConflict: 'manager_id,sector_id' })
+      if (managerSectorError) {
+        return jsonResponse(400, { error: managerSectorError.message || 'Failed to set manager sectors' })
+      }
+    }
   }
 
   return jsonResponse(200, { id: created.user.id })

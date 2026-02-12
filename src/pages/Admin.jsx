@@ -8,10 +8,12 @@ import {
   deleteUserWithEdgeFunction,
   deletePauseType,
   deleteSector,
+  listManagerSectors,
   listManagers,
   listPauseTypes,
   listProfiles,
   listSectors,
+  setManagerSectors,
   updatePauseType,
   updateProfile,
   updateSector
@@ -24,7 +26,8 @@ const emptyUserForm = {
   full_name: '',
   role: 'AGENTE',
   manager_id: '',
-  team_id: ''
+  team_id: '',
+  sector_ids: []
 }
 
 const minutesToTime = (minutes) => {
@@ -55,6 +58,7 @@ export default function Admin() {
   const [pauseTypes, setPauseTypes] = useState([])
   const [sectors, setSectors] = useState([])
   const [pauseSchedules, setPauseSchedules] = useState([])
+  const [managerSectorsMap, setManagerSectorsMap] = useState({})
   const [userForm, setUserForm] = useState(emptyUserForm)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -68,6 +72,7 @@ export default function Admin() {
     scheduled_time: '',
     duration_time: ''
   })
+  const [expandedAgentId, setExpandedAgentId] = useState('')
 
   const refreshAll = async () => {
     setLoading(true)
@@ -80,11 +85,18 @@ export default function Admin() {
         listSectors(),
         listPauseSchedules()
       ])
+      const managerSectorsData = await listManagerSectors()
       setProfiles(profilesData)
       setPauseTypes(typesData)
       setManagers(managersData)
       setSectors(sectorsData)
       setPauseSchedules(schedulesData)
+      const nextMap = {}
+      ;(managerSectorsData || []).forEach((row) => {
+        if (!nextMap[row.manager_id]) nextMap[row.manager_id] = []
+        nextMap[row.manager_id].push(row.sector_id)
+      })
+      setManagerSectorsMap(nextMap)
     } catch (err) {
       setError(err.message || 'Falha ao carregar dados')
     } finally {
@@ -119,6 +131,12 @@ export default function Admin() {
     setSuccess('')
     setBusy(true)
     try {
+      if (profile.role === 'GERENTE') {
+        const sectorIds = managerSectorsMap[profile.id] || (profile.team_id ? [profile.team_id] : [])
+        if (!sectorIds.length) {
+          throw new Error('Gerente precisa de pelo menos um setor.')
+        }
+      }
       const payload = {
         full_name: profile.full_name,
         role: profile.role,
@@ -126,6 +144,10 @@ export default function Admin() {
         team_id: profile.team_id || null
       }
       await updateProfile(profile.id, payload)
+      if (profile.role === 'GERENTE') {
+        const sectorIds = managerSectorsMap[profile.id] || (profile.team_id ? [profile.team_id] : [])
+        await setManagerSectors(profile.id, sectorIds)
+      }
       setSuccess('Perfil atualizado.')
       await refreshAll()
     } catch (err) {
@@ -343,9 +365,13 @@ export default function Admin() {
           if (value === 'ADMIN') {
             next.manager_id = ''
             next.team_id = ''
+            setManagerSectorsMap((current) => ({ ...current, [id]: [] }))
           }
           if (value === 'GERENTE') {
             next.manager_id = ''
+          }
+          if (value !== 'GERENTE') {
+            setManagerSectorsMap((current) => ({ ...current, [id]: [] }))
           }
         }
         return next
@@ -368,6 +394,50 @@ export default function Admin() {
   }
 
   const agents = useMemo(() => profiles.filter((profile) => profile.role === 'AGENTE'), [profiles])
+  const getManagerSectorIds = (managerId, fallbackTeamId) => {
+    const ids = managerSectorsMap[managerId]
+    if (ids && ids.length) return ids
+    return fallbackTeamId ? [fallbackTeamId] : []
+  }
+
+  const schedulesByAgent = useMemo(() => {
+    const map = new Map()
+    pauseSchedules.forEach((schedule) => {
+      const key = schedule.agent_id || schedule.profiles?.id
+      if (!key) return
+      if (!map.has(key)) map.set(key, [])
+      map.get(key).push(schedule)
+    })
+    map.forEach((items) => {
+      items.sort((a, b) => String(a.scheduled_time || '').localeCompare(String(b.scheduled_time || '')))
+    })
+    return map
+  }, [pauseSchedules])
+
+  const sectorById = useMemo(() => {
+    const map = new Map()
+    sectors.forEach((sector) => {
+      map.set(sector.id, sector.label)
+    })
+    return map
+  }, [sectors])
+
+  const sortedAgents = useMemo(() => {
+    const list = [...agents]
+    const nextTime = (agentId) => {
+      const items = schedulesByAgent.get(agentId) || []
+      if (!items.length) return null
+      return items[0]?.scheduled_time || null
+    }
+    return list.sort((a, b) => {
+      const aTime = nextTime(a.id)
+      const bTime = nextTime(b.id)
+      if (aTime && bTime) return String(aTime).localeCompare(String(bTime))
+      if (aTime) return -1
+      if (bTime) return 1
+      return a.full_name.localeCompare(b.full_name)
+    })
+  }, [agents, schedulesByAgent])
 
   return (
     <div className="min-h-screen">
@@ -452,7 +522,15 @@ export default function Admin() {
                         ...prev,
                         role: nextRole,
                         manager_id: nextRole === 'AGENTE' ? prev.manager_id : '',
-                        team_id: nextRole === 'ADMIN' ? '' : prev.team_id
+                        team_id: nextRole === 'ADMIN' ? '' : prev.team_id,
+                        sector_ids:
+                          nextRole === 'GERENTE'
+                            ? prev.sector_ids?.length
+                              ? prev.sector_ids
+                              : prev.team_id
+                                ? [prev.team_id]
+                                : []
+                            : []
                       }))
                     }}
                   >
@@ -488,20 +566,43 @@ export default function Admin() {
                 </div>
                 <div>
                   <label className="label">Setor</label>
-                  <select
-                    className="input mt-1"
-                    value={userForm.team_id}
-                    onChange={(e) => setUserForm({ ...userForm, team_id: e.target.value })}
-                    disabled={userForm.role === 'ADMIN'}
-                    required={userForm.role === 'GERENTE'}
-                  >
-                    <option value="">Nenhum</option>
-                    {sectors.map((sector) => (
-                      <option key={sector.id} value={sector.id}>
-                        {sector.label}
-                      </option>
-                    ))}
-                  </select>
+                  {userForm.role === 'GERENTE' ? (
+                    <select
+                      className="input mt-1"
+                      multiple
+                      value={userForm.sector_ids}
+                      onChange={(e) => {
+                        const selected = Array.from(e.target.selectedOptions).map((opt) => opt.value)
+                        setUserForm((prev) => ({
+                          ...prev,
+                          sector_ids: selected,
+                          team_id: selected[0] || ''
+                        }))
+                      }}
+                      required={userForm.role === 'GERENTE'}
+                    >
+                      {sectors.map((sector) => (
+                        <option key={sector.id} value={sector.id}>
+                          {sector.label}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <select
+                      className="input mt-1"
+                      value={userForm.team_id}
+                      onChange={(e) => setUserForm({ ...userForm, team_id: e.target.value })}
+                      disabled={userForm.role === 'ADMIN'}
+                      required={userForm.role === 'GERENTE'}
+                    >
+                      <option value="">Nenhum</option>
+                      {sectors.map((sector) => (
+                        <option key={sector.id} value={sector.id}>
+                          {sector.label}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
                 <button className="btn-primary w-full" type="submit" disabled={busy}>
                   {busy ? 'Criando...' : 'Criar usuario'}
@@ -561,20 +662,42 @@ export default function Admin() {
                             ))}
                           </select>
                         </td>
-                        <td className="py-2">
-                          <select
-                            className="input"
-                            value={profile.team_id || ''}
-                            onChange={(e) => updateProfileField(profile.id, 'team_id', e.target.value)}
-                            disabled={profile.role === 'ADMIN'}
-                          >
-                            <option value="">Nenhum</option>
-                            {sectors.map((sector) => (
-                              <option key={sector.id} value={sector.id}>
-                                {sector.label}
-                              </option>
-                            ))}
-                          </select>
+                      <td className="py-2">
+                          {profile.role === 'GERENTE' ? (
+                            <select
+                              className="input"
+                              multiple
+                              value={getManagerSectorIds(profile.id, profile.team_id)}
+                              onChange={(e) => {
+                                const selected = Array.from(e.target.selectedOptions).map((opt) => opt.value)
+                                setManagerSectorsMap((current) => ({
+                                  ...current,
+                                  [profile.id]: selected
+                                }))
+                                updateProfileField(profile.id, 'team_id', selected[0] || '')
+                              }}
+                            >
+                              {sectors.map((sector) => (
+                                <option key={sector.id} value={sector.id}>
+                                  {sector.label}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <select
+                              className="input"
+                              value={profile.team_id || ''}
+                              onChange={(e) => updateProfileField(profile.id, 'team_id', e.target.value)}
+                              disabled={profile.role === 'ADMIN'}
+                            >
+                              <option value="">Nenhum</option>
+                              {sectors.map((sector) => (
+                                <option key={sector.id} value={sector.id}>
+                                  {sector.label}
+                                </option>
+                              ))}
+                            </select>
+                          )}
                         </td>
                         <td className="py-2">
                           <button
@@ -886,79 +1009,103 @@ export default function Admin() {
 
             <div className="card">
               <h2 className="font-display text-xl font-semibold text-slate-900">Pausas programadas</h2>
-              <div className="mt-4 overflow-x-auto">
-                <table className="min-w-full text-sm">
-                  <thead className="text-slate-500">
-                    <tr>
-                      <th className="text-left py-2">Agente</th>
-                      <th className="text-left py-2">Tipo</th>
-                      <th className="text-left py-2">Horario</th>
-                      <th className="text-left py-2">Duracao</th>
-                      <th className="text-left py-2">Acoes</th>
-                    </tr>
-                  </thead>
-                  <tbody className="text-slate-900">
-                    {pauseSchedules.map((schedule) => (
-                      <tr key={schedule.id} className="border-t border-slate-100">
-                        <td className="py-2">{schedule.profiles?.full_name || '-'}</td>
-                        <td className="py-2">{schedule.pause_types?.label || '-'}</td>
-                        <td className="py-2">
-                          <input
-                            className="input"
-                            type="time"
-                            step="60"
-                            value={normalizeTime(schedule.scheduled_time)}
-                            onChange={(e) =>
-                              updateScheduleField(schedule.id, 'scheduled_time', e.target.value)
-                            }
-                          />
-                        </td>
-                        <td className="py-2">
-                          <input
-                            className="input"
-                            type="time"
-                            step="60"
-                            value={minutesToTime(schedule.duration_minutes)}
-                            onChange={(e) =>
-                              updateScheduleField(
-                                schedule.id,
-                                'duration_minutes',
-                                timeToMinutes(e.target.value)
-                              )
-                            }
-                          />
-                        </td>
-                        <td className="py-2">
-                          <div className="flex gap-2">
-                            <button
-                              className="btn-ghost"
-                              type="button"
-                              onClick={() => handleScheduleUpdate(schedule)}
-                              disabled={busy}
-                            >
-                              Salvar
-                            </button>
-                            <button
-                              className="btn-ghost text-red-600"
-                              type="button"
-                              onClick={() => handleScheduleDelete(schedule)}
-                              disabled={busy}
-                            >
-                              Remover
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                    {!pauseSchedules.length ? (
-                      <tr>
-                        <td className="py-3 text-slate-500" colSpan="5">
-                          Nenhuma pausa programada.
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
+              <div className="mt-4 space-y-3">
+                {sortedAgents.map((agent) => {
+                  const items = schedulesByAgent.get(agent.id) || []
+                  const isOpen = expandedAgentId === agent.id
+                  const sectorLabel = sectorById.get(agent.team_id) || 'Sem setor'
+                  return (
+                    <div key={agent.id} className="rounded-xl border border-slate-200">
+                      <button
+                        type="button"
+                        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
+                        onClick={() => setExpandedAgentId(isOpen ? '' : agent.id)}
+                      >
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">{agent.full_name}</p>
+                        <p className="text-xs text-slate-500">
+                          {sectorLabel} • {items.length} pausas registradas
+                        </p>
+                      </div>
+                        <span className="text-xs text-slate-500">{isOpen ? 'Fechar' : 'Ver pausas'}</span>
+                      </button>
+                      {isOpen ? (
+                        <div className="border-t border-slate-100 px-3 pb-3 pt-2">
+                          {items.length ? (
+                            <div className="overflow-x-auto">
+                              <table className="min-w-full text-sm">
+                                <thead className="text-slate-500">
+                                  <tr>
+                                    <th className="text-left py-2">Tipo</th>
+                                    <th className="text-left py-2">Horario</th>
+                                    <th className="text-left py-2">Duracao</th>
+                                    <th className="text-left py-2">Acoes</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="text-slate-900">
+                                  {items.map((schedule) => (
+                                    <tr key={schedule.id} className="border-t border-slate-100">
+                                      <td className="py-2">{schedule.pause_types?.label || '-'}</td>
+                                      <td className="py-2">
+                                        <input
+                                          className="input"
+                                          type="time"
+                                          step="60"
+                                          value={normalizeTime(schedule.scheduled_time)}
+                                          onChange={(e) =>
+                                            updateScheduleField(schedule.id, 'scheduled_time', e.target.value)
+                                          }
+                                        />
+                                      </td>
+                                      <td className="py-2">
+                                        <input
+                                          className="input"
+                                          type="time"
+                                          step="60"
+                                          value={minutesToTime(schedule.duration_minutes)}
+                                          onChange={(e) =>
+                                            updateScheduleField(
+                                              schedule.id,
+                                              'duration_minutes',
+                                              timeToMinutes(e.target.value)
+                                            )
+                                          }
+                                        />
+                                      </td>
+                                      <td className="py-2">
+                                        <div className="flex gap-2">
+                                          <button
+                                            className="btn-ghost"
+                                            type="button"
+                                            onClick={() => handleScheduleUpdate(schedule)}
+                                            disabled={busy}
+                                          >
+                                            Salvar
+                                          </button>
+                                          <button
+                                            className="btn-ghost text-red-600"
+                                            type="button"
+                                            onClick={() => handleScheduleDelete(schedule)}
+                                            disabled={busy}
+                                          >
+                                            Remover
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ) : (
+                            <p className="text-sm text-slate-500">Nenhuma pausa programada.</p>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  )
+                })}
+                {!agents.length ? <p className="text-sm text-slate-500">Nenhum agente encontrado.</p> : null}
               </div>
             </div>
           </div>

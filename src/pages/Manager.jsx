@@ -75,6 +75,7 @@ export default function Manager() {
     scheduled_time: '',
     duration_time: ''
   })
+  const [expandedAgentId, setExpandedAgentId] = useState('')
 
   const resetFilters = () => {
     setPeriod('week')
@@ -159,7 +160,7 @@ export default function Manager() {
         const [agentsData, typesData, sectorsData] = await Promise.all([
           listAgents(),
           getPauseTypes(false),
-          isAdmin ? listSectors() : Promise.resolve([])
+          isAdmin ? listSectors() : listSectors()
         ])
         setAgents(agentsData)
         setPauseTypes(typesData)
@@ -361,6 +362,45 @@ export default function Manager() {
 
     return { rows: Array.from(map.values()), totals }
   }, [dashboard])
+
+  const schedulesByAgent = useMemo(() => {
+    const map = new Map()
+    pauseSchedules.forEach((schedule) => {
+      const key = schedule.agent_id || schedule.profiles?.id
+      if (!key) return
+      if (!map.has(key)) map.set(key, [])
+      map.get(key).push(schedule)
+    })
+    map.forEach((items) => {
+      items.sort((a, b) => String(a.scheduled_time || '').localeCompare(String(b.scheduled_time || '')))
+    })
+    return map
+  }, [pauseSchedules])
+
+  const sectorById = useMemo(() => {
+    const map = new Map()
+    sectors.forEach((sector) => {
+      map.set(sector.id, sector.label)
+    })
+    return map
+  }, [sectors])
+
+  const sortedAgents = useMemo(() => {
+    const list = [...agents]
+    const nextTime = (agentId) => {
+      const items = schedulesByAgent.get(agentId) || []
+      if (!items.length) return null
+      return items[0]?.scheduled_time || null
+    }
+    return list.sort((a, b) => {
+      const aTime = nextTime(a.id)
+      const bTime = nextTime(b.id)
+      if (aTime && bTime) return String(aTime).localeCompare(String(bTime))
+      if (aTime) return -1
+      if (bTime) return 1
+      return a.full_name.localeCompare(b.full_name)
+    })
+  }, [agents, schedulesByAgent])
 
   const ranking = useMemo(() => {
     return [...summary.rows]
@@ -867,79 +907,103 @@ export default function Manager() {
             <p className="text-sm text-slate-600 mt-1">
               Para mudar agente ou tipo, remova e crie novamente.
             </p>
-            <div className="mt-4 overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead className="text-slate-500">
-                  <tr>
-                    <th className="text-left py-2">Agente</th>
-                    <th className="text-left py-2">Tipo</th>
-                    <th className="text-left py-2">Horario</th>
-                    <th className="text-left py-2">Duracao</th>
-                    <th className="text-left py-2">Acoes</th>
-                  </tr>
-                </thead>
-                <tbody className="text-slate-900">
-                  {pauseSchedules.map((schedule) => (
-                    <tr key={schedule.id} className="border-t border-slate-100">
-                      <td className="py-2">{schedule.profiles?.full_name || '-'}</td>
-                      <td className="py-2">{schedule.pause_types?.label || '-'}</td>
-                      <td className="py-2">
-                        <input
-                          className="input"
-                          type="time"
-                          step="60"
-                          value={normalizeTime(schedule.scheduled_time)}
-                          onChange={(e) =>
-                            updateScheduleField(schedule.id, 'scheduled_time', e.target.value)
-                          }
-                        />
-                      </td>
-                      <td className="py-2">
-                        <input
-                          className="input"
-                          type="time"
-                          step="60"
-                          value={minutesToTime(schedule.duration_minutes)}
-                          onChange={(e) =>
-                            updateScheduleField(
-                              schedule.id,
-                              'duration_minutes',
-                              timeToMinutes(e.target.value)
-                            )
-                          }
-                        />
-                      </td>
-                      <td className="py-2">
-                        <div className="flex gap-2">
-                          <button
-                            className="btn-ghost"
-                            type="button"
-                            onClick={() => handleScheduleUpdate(schedule)}
-                            disabled={scheduleBusy}
-                          >
-                            Salvar
-                          </button>
-                          <button
-                            className="btn-ghost text-red-600"
-                            type="button"
-                            onClick={() => handleScheduleDelete(schedule)}
-                            disabled={scheduleBusy}
-                          >
-                            Remover
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                  {!pauseSchedules.length ? (
-                    <tr>
-                      <td className="py-3 text-slate-500" colSpan="5">
-                        Nenhuma pausa programada.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
+            <div className="mt-4 space-y-3">
+              {sortedAgents.map((agent) => {
+                const items = schedulesByAgent.get(agent.id) || []
+                const isOpen = expandedAgentId === agent.id
+                const sectorLabel = sectorById.get(agent.team_id) || 'Sem setor'
+                return (
+                  <div key={agent.id} className="rounded-xl border border-slate-200">
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
+                      onClick={() => setExpandedAgentId(isOpen ? '' : agent.id)}
+                    >
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">{agent.full_name}</p>
+                        <p className="text-xs text-slate-500">
+                          {sectorLabel} • {items.length} pausas registradas
+                        </p>
+                      </div>
+                      <span className="text-xs text-slate-500">{isOpen ? 'Fechar' : 'Ver pausas'}</span>
+                    </button>
+                    {isOpen ? (
+                      <div className="border-t border-slate-100 px-3 pb-3 pt-2">
+                        {items.length ? (
+                          <div className="overflow-x-auto">
+                            <table className="min-w-full text-sm">
+                              <thead className="text-slate-500">
+                                <tr>
+                                  <th className="text-left py-2">Tipo</th>
+                                  <th className="text-left py-2">Horario</th>
+                                  <th className="text-left py-2">Duracao</th>
+                                  <th className="text-left py-2">Acoes</th>
+                                </tr>
+                              </thead>
+                              <tbody className="text-slate-900">
+                                {items.map((schedule) => (
+                                  <tr key={schedule.id} className="border-t border-slate-100">
+                                    <td className="py-2">{schedule.pause_types?.label || '-'}</td>
+                                    <td className="py-2">
+                                      <input
+                                        className="input"
+                                        type="time"
+                                        step="60"
+                                        value={normalizeTime(schedule.scheduled_time)}
+                                        onChange={(e) =>
+                                          updateScheduleField(schedule.id, 'scheduled_time', e.target.value)
+                                        }
+                                      />
+                                    </td>
+                                    <td className="py-2">
+                                      <input
+                                        className="input"
+                                        type="time"
+                                        step="60"
+                                        value={minutesToTime(schedule.duration_minutes)}
+                                        onChange={(e) =>
+                                          updateScheduleField(
+                                            schedule.id,
+                                            'duration_minutes',
+                                            timeToMinutes(e.target.value)
+                                          )
+                                        }
+                                      />
+                                    </td>
+                                    <td className="py-2">
+                                      <div className="flex gap-2">
+                                        <button
+                                          className="btn-ghost"
+                                          type="button"
+                                          onClick={() => handleScheduleUpdate(schedule)}
+                                          disabled={scheduleBusy}
+                                        >
+                                          Salvar
+                                        </button>
+                                        <button
+                                          className="btn-ghost text-red-600"
+                                          type="button"
+                                          onClick={() => handleScheduleDelete(schedule)}
+                                          disabled={scheduleBusy}
+                                        >
+                                          Remover
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-slate-500">Nenhuma pausa programada.</p>
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              })}
+              {!agents.length ? <p className="text-sm text-slate-500">Nenhum agente encontrado.</p> : null}
             </div>
           </div>
         </div>

@@ -12,7 +12,7 @@ export async function listProfiles() {
 export async function listAgents() {
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, full_name, role')
+    .select('id, full_name, role, team_id')
     .eq('role', 'AGENTE')
     .order('full_name', { ascending: true })
   if (error) throw error
@@ -56,6 +56,28 @@ export async function listSectors() {
     .order('label', { ascending: true })
   if (error) throw error
   return data
+}
+
+export async function listManagerSectors() {
+  const { data, error } = await supabase
+    .from('manager_sectors')
+    .select('manager_id, sector_id')
+  if (error) throw error
+  return data
+}
+
+export async function setManagerSectors(managerId, sectorIds) {
+  if (!managerId) throw new Error('Missing manager id')
+  const ids = (sectorIds || []).filter(Boolean)
+  const { error: deleteError } = await supabase
+    .from('manager_sectors')
+    .delete()
+    .eq('manager_id', managerId)
+  if (deleteError) throw deleteError
+  if (!ids.length) return
+  const rows = ids.map((sectorId) => ({ manager_id: managerId, sector_id: sectorId }))
+  const { error: insertError } = await supabase.from('manager_sectors').insert(rows)
+  if (insertError) throw insertError
 }
 
 export async function createPauseType(payload) {
