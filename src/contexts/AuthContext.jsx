@@ -42,10 +42,25 @@ export function AuthProvider({ children }) {
   const [error, setError] = useState(null)
 
   const didInitRef = useRef(false)
+  const profileRef = useRef(null)
+  const sessionRef = useRef(null)
+  const errorRef = useRef(null)
   const profileRequestIdRef = useRef(0)
   const lastProfileUserIdRef = useRef(null)
   const slowSessionTimerRef = useRef(null)
   const slowProfileTimerRef = useRef(null)
+
+  useEffect(() => {
+    profileRef.current = profile
+  }, [profile])
+
+  useEffect(() => {
+    sessionRef.current = session
+  }, [session])
+
+  useEffect(() => {
+    errorRef.current = error
+  }, [error])
 
   const clearSlowTimers = () => {
     if (slowSessionTimerRef.current) {
@@ -90,6 +105,12 @@ export function AuthProvider({ children }) {
     setError(null)
     startSlowProfileTimer()
 
+    const cached = readCachedProfile(userId)
+    if (cached) {
+      setProfile(cached)
+      writeCachedProfile(cached)
+    }
+
     try {
       console.info('[auth] loadProfile start userId=', userId)
       const { data, error: profileError } = await supabase
@@ -104,9 +125,7 @@ export function AuthProvider({ children }) {
 
       if (profileError) {
         console.error('[auth] loadProfile error', profileError)
-        setProfile(null)
         setError(JSON.stringify(profileError))
-        writeCachedProfile(null)
         return null
       }
 
@@ -126,9 +145,7 @@ export function AuthProvider({ children }) {
     } catch (err) {
       if (requestId !== profileRequestIdRef.current) return null
       console.error('[auth] loadProfile exception', err)
-      setProfile(null)
       setError(String(err?.message || err))
-      writeCachedProfile(null)
       return null
     } finally {
       if (requestId === profileRequestIdRef.current) {
@@ -201,24 +218,41 @@ export function AuthProvider({ children }) {
       console.info('[auth] onAuthStateChange event=', event)
       if (event === 'INITIAL_SESSION') return
 
-      const nextUserId = nextSession?.user?.id || null
-      setSession(nextSession)
+      setLoading(true)
+      setError(null)
+      startSlowSessionTimer()
 
-      if (!nextUserId) {
-        setProfile(null)
-        writeCachedProfile(null)
-        setProfileFetched(false)
+      try {
+        const nextUserId = nextSession?.user?.id || null
+        setSession(nextSession)
+
+        if (!nextUserId) {
+          setProfile(null)
+          writeCachedProfile(null)
+          setProfileFetched(false)
+          lastProfileUserIdRef.current = null
+          return
+        }
+
+        const currentProfile = profileRef.current
+        if (
+          nextUserId === lastProfileUserIdRef.current &&
+          currentProfile?.id === nextUserId &&
+          !errorRef.current
+        ) {
+          return
+        }
+
+        await loadProfile(nextUserId)
+        lastProfileUserIdRef.current = nextUserId
+      } finally {
         setLoading(false)
-        setError(null)
-        return
+        setSlowSession(false)
+        if (slowSessionTimerRef.current) {
+          clearTimeout(slowSessionTimerRef.current)
+          slowSessionTimerRef.current = null
+        }
       }
-
-      if (nextUserId === lastProfileUserIdRef.current && profile) {
-        return
-      }
-
-      await loadProfile(nextUserId)
-      lastProfileUserIdRef.current = nextUserId
     })
 
     return () => {
