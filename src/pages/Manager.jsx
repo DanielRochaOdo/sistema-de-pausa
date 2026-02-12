@@ -3,7 +3,8 @@ import TopNav from '../components/TopNav'
 import StatCard from '../components/StatCard'
 import { listDashboard, getPauseTypes, listPauseSchedules, upsertPauseSchedule, deletePauseSchedule } from '../services/apiPauses'
 import { listAgents, listSectors } from '../services/apiAdmin'
-import { listAgentLogins } from '../services/apiSessions'
+import { listAgentLogins, listAgentLoginHistory } from '../services/apiSessions'
+import { exportCsv, exportPdf, exportXlsx } from '../utils/export'
 import { formatDuration, formatInputDate, startOfMonth, startOfToday, startOfWeek } from '../utils/format'
 import { useAuth } from '../contexts/useAuth'
 
@@ -45,6 +46,14 @@ export default function Manager() {
   const [loginsLoading, setLoginsLoading] = useState(false)
   const [loginsNow, setLoginsNow] = useState(Date.now())
   const [loginsFetchedAt, setLoginsFetchedAt] = useState(Date.now())
+  const [selectedAgent, setSelectedAgent] = useState(null)
+  const [history, setHistory] = useState([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState('')
+  const [historyPage, setHistoryPage] = useState(0)
+  const [historyHasMore, setHistoryHasMore] = useState(false)
+  const [historyExportOpen, setHistoryExportOpen] = useState(false)
+  const [historyExporting, setHistoryExporting] = useState(false)
 
   const [period, setPeriod] = useState('week')
   const [fromDate, setFromDate] = useState(formatInputDate(startOfWeek()))
@@ -79,6 +88,26 @@ export default function Manager() {
       setLoginsError(err.message || 'Falha ao carregar logins')
     } finally {
       setLoginsLoading(false)
+    }
+  }
+
+  const HISTORY_PAGE_SIZE = 30
+
+  const loadHistory = async (agent, page = 0) => {
+    if (!agent?.agent_id) return
+    setHistoryLoading(true)
+    setHistoryError('')
+    try {
+      const data = await listAgentLoginHistory(agent.agent_id, {
+        limit: HISTORY_PAGE_SIZE,
+        offset: page * HISTORY_PAGE_SIZE
+      })
+      setHistory(data || [])
+      setHistoryHasMore((data || []).length === HISTORY_PAGE_SIZE)
+    } catch (err) {
+      setHistoryError(err.message || 'Falha ao carregar historico')
+    } finally {
+      setHistoryLoading(false)
     }
   }
 
@@ -211,6 +240,11 @@ export default function Manager() {
   useEffect(() => {
     if (tab !== 'logins') return
     loadLogins()
+    setSelectedAgent(null)
+    setHistory([])
+    setHistoryPage(0)
+    setHistoryHasMore(false)
+    setHistoryExportOpen(false)
   }, [tab])
 
   useEffect(() => {
@@ -265,6 +299,34 @@ export default function Manager() {
     const hours = String(Math.floor(minutes / 60)).padStart(2, '0')
     const mins = String(minutes % 60).padStart(2, '0')
     return `${hours}:${mins}`
+  }
+
+  const handleHistoryExport = async (format) => {
+    if (!selectedAgent?.agent_id) return
+    setHistoryExporting(true)
+    try {
+      const data = await listAgentLoginHistory(selectedAgent.agent_id, { limit: 10000, offset: 0 })
+      const mapped = (data || []).map((item) => ({
+        login: item.login_at ? new Date(item.login_at).toLocaleString('pt-BR') : '-',
+        logout: item.logout_at ? new Date(item.logout_at).toLocaleString('pt-BR') : '-',
+        sessao: formatSessionDuration(item.login_at, item.logout_at),
+        dispositivo:
+          item.device_type === 'mobile'
+            ? 'Mobile'
+            : item.device_type === 'desktop'
+              ? 'Desktop'
+              : '-'
+      }))
+      const baseName = `historico-login-${selectedAgent.agent_name || 'agente'}`
+      if (format === 'csv') exportCsv(mapped, `${baseName}.csv`)
+      if (format === 'xlsx') exportXlsx(mapped, `${baseName}.xlsx`)
+      if (format === 'pdf') exportPdf(mapped, `${baseName}.pdf`, 'Historico de Login')
+      setHistoryExportOpen(false)
+    } catch (err) {
+      setHistoryError(err.message || 'Falha ao exportar historico')
+    } finally {
+      setHistoryExporting(false)
+    }
   }
 
   const formatTotalToday = (totalSeconds, loginAt, logoutAt) => {
@@ -333,8 +395,27 @@ export default function Manager() {
                 <tbody className="text-slate-900">
                   {logins.map((item) => {
                     const isActive = !!item.login_at && !item.logout_at
+                    const isSelected = selectedAgent?.agent_id === item.agent_id
                     return (
-                      <tr key={item.agent_id} className="border-t border-slate-100">
+                      <tr
+                        key={item.agent_id}
+                        className={`border-t border-slate-100 cursor-pointer hover:bg-slate-50 ${isSelected ? 'bg-slate-50' : ''}`}
+                        onClick={() => {
+                          if (isSelected) {
+                            setSelectedAgent(null)
+                            setHistory([])
+                            setHistoryPage(0)
+                            setHistoryHasMore(false)
+                            setHistoryExportOpen(false)
+                            return
+                          }
+                          setSelectedAgent(item)
+                          setHistoryPage(0)
+                          setHistoryHasMore(false)
+                          setHistoryExportOpen(false)
+                          loadHistory(item, 0)
+                        }}
+                      >
                         <td className="py-2 font-medium">{item.agent_name}</td>
                         <td className="py-2">
                           {item.login_at ? new Date(item.login_at).toLocaleString('pt-BR') : '-'}
@@ -371,6 +452,128 @@ export default function Manager() {
                 </tbody>
               </table>
             </div>
+
+            {selectedAgent ? (
+              <div className="mt-6">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="font-display text-lg font-semibold text-slate-900">
+                    Historico - {selectedAgent.agent_name}
+                  </h3>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-slate-500">Pagina {historyPage + 1}</span>
+                    <button
+                      className="btn-ghost text-xs"
+                      type="button"
+                      disabled={historyPage === 0 || historyLoading}
+                      onClick={() => {
+                        const nextPage = Math.max(0, historyPage - 1)
+                        setHistoryPage(nextPage)
+                        loadHistory(selectedAgent, nextPage)
+                      }}
+                    >
+                      Anterior
+                    </button>
+                    <button
+                      className="btn-ghost text-xs"
+                      type="button"
+                      disabled={!historyHasMore || historyLoading}
+                      onClick={() => {
+                        const nextPage = historyPage + 1
+                        setHistoryPage(nextPage)
+                        loadHistory(selectedAgent, nextPage)
+                      }}
+                    >
+                      Proxima
+                    </button>
+                    <div className="relative">
+                      <button
+                        className="btn-primary"
+                        type="button"
+                        onClick={() => setHistoryExportOpen((prev) => !prev)}
+                        disabled={historyExporting}
+                      >
+                        {historyExporting ? 'Exportando...' : 'Exportar'}
+                      </button>
+                      {historyExportOpen ? (
+                        <div className="absolute right-0 mt-2 w-40 rounded-xl border border-slate-200 bg-white shadow-lg">
+                          <button
+                            className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50"
+                            onClick={() => handleHistoryExport('csv')}
+                          >
+                            CSV
+                          </button>
+                          <button
+                            className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50"
+                            onClick={() => handleHistoryExport('xlsx')}
+                          >
+                            XLSX
+                          </button>
+                          <button
+                            className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50"
+                            onClick={() => handleHistoryExport('pdf')}
+                          >
+                            PDF
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                    {historyLoading ? <span className="text-sm text-slate-500">Carregando...</span> : null}
+                  </div>
+                </div>
+                {historyError ? (
+                  <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {historyError}
+                  </div>
+                ) : null}
+                <div className="mt-3 overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead className="text-slate-500">
+                      <tr>
+                        <th className="text-left py-2">Login</th>
+                        <th className="text-left py-2">Logout</th>
+                        <th className="text-left py-2">Sessao</th>
+                        <th className="text-left py-2">Dispositivo</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-slate-900">
+                      {history.map((item, index) => {
+                        const isActive = !!item.login_at && !item.logout_at
+                        return (
+                          <tr key={`${selectedAgent.agent_id}-${index}`} className="border-t border-slate-100">
+                            <td className="py-2">
+                              {item.login_at ? new Date(item.login_at).toLocaleString('pt-BR') : '-'}
+                            </td>
+                            <td className="py-2">
+                              {item.logout_at ? new Date(item.logout_at).toLocaleString('pt-BR') : '-'}
+                            </td>
+                            <td className="py-2">
+                              <span className="font-medium">
+                                {formatSessionDuration(item.login_at, item.logout_at)}
+                              </span>
+                              {isActive ? <span className="ml-2 text-xs text-emerald-600">Atual</span> : null}
+                            </td>
+                            <td className="py-2">
+                              {item.device_type === 'mobile'
+                                ? 'Mobile'
+                                : item.device_type === 'desktop'
+                                  ? 'Desktop'
+                                  : '-'}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                      {!history.length ? (
+                        <tr>
+                          <td className="py-3 text-slate-500" colSpan="4">
+                            Nenhum historico encontrado.
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
 
