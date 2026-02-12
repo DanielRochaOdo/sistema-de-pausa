@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import TopNav from '../components/TopNav'
 import StatCard from '../components/StatCard'
-import { listDashboard, getPauseTypes, listPauseSchedules, upsertPauseSchedule, deletePauseSchedule } from '../services/apiPauses'
+import { listDashboard, getPauseTypes, listPauseSchedules, upsertPauseSchedule, deletePauseSchedule, listActivePauses } from '../services/apiPauses'
 import { listAgents, listSectors } from '../services/apiAdmin'
-import { listAgentLogins, listAgentLoginHistory } from '../services/apiSessions'
+import { listAgentLogins, listAgentLoginHistory, listActiveAgentSessions } from '../services/apiSessions'
 import { exportCsv, exportPdf, exportXlsx } from '../utils/export'
 import { formatDuration, formatInputDate, startOfMonth, startOfToday, startOfWeek } from '../utils/format'
 import { useAuth } from '../contexts/useAuth'
+import { supabase } from '../services/supabaseClient'
 
 const minutesToTime = (minutes) => {
   if (minutes === null || minutes === undefined || Number.isNaN(minutes)) return ''
@@ -54,6 +55,13 @@ export default function Manager() {
   const [historyHasMore, setHistoryHasMore] = useState(false)
   const [historyExportOpen, setHistoryExportOpen] = useState(false)
   const [historyExporting, setHistoryExporting] = useState(false)
+  const [activeSessions, setActiveSessions] = useState([])
+  const [activeSessionsLoading, setActiveSessionsLoading] = useState(false)
+  const [activePauses, setActivePauses] = useState([])
+  const [activePausesLoading, setActivePausesLoading] = useState(false)
+  const [agentsModalOpen, setAgentsModalOpen] = useState(false)
+  const [loggedModalOpen, setLoggedModalOpen] = useState(false)
+  const [pausedModalOpen, setPausedModalOpen] = useState(false)
 
   const [period, setPeriod] = useState('week')
   const [fromDate, setFromDate] = useState(formatInputDate(startOfWeek()))
@@ -121,6 +129,30 @@ export default function Manager() {
     }
   }
 
+  const loadActiveSessions = async () => {
+    setActiveSessionsLoading(true)
+    try {
+      const data = await listActiveAgentSessions()
+      setActiveSessions(data || [])
+    } catch (err) {
+      console.error('[manager] failed to load active sessions', err)
+    } finally {
+      setActiveSessionsLoading(false)
+    }
+  }
+
+  const loadActivePauses = async () => {
+    setActivePausesLoading(true)
+    try {
+      const data = await listActivePauses()
+      setActivePauses(data || [])
+    } catch (err) {
+      console.error('[manager] failed to load active pauses', err)
+    } finally {
+      setActivePausesLoading(false)
+    }
+  }
+
   useEffect(() => {
     const init = async () => {
       try {
@@ -133,12 +165,49 @@ export default function Manager() {
         setPauseTypes(typesData)
         setSectors(sectorsData)
         await loadSchedules()
+        await Promise.all([loadActiveSessions(), loadActivePauses()])
       } catch (err) {
         console.error(err)
       }
     }
     init()
   }, [isAdmin])
+
+  useEffect(() => {
+    if (!profile?.id) return
+
+    loadActiveSessions()
+    loadActivePauses()
+
+    const sessionsChannel = supabase
+      .channel(`manager-active-sessions-${profile.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'user_sessions' },
+        () => loadActiveSessions()
+      )
+      .subscribe()
+
+    const pausesChannel = supabase
+      .channel(`manager-active-pauses-${profile.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'pauses' },
+        () => loadActivePauses()
+      )
+      .subscribe()
+
+    const interval = setInterval(() => {
+      loadActiveSessions()
+      loadActivePauses()
+    }, 30000)
+
+    return () => {
+      clearInterval(interval)
+      supabase.removeChannel(sessionsChannel)
+      supabase.removeChannel(pausesChannel)
+    }
+  }, [profile?.id])
 
   useEffect(() => {
     if (period === 'today') {
@@ -253,6 +322,14 @@ export default function Manager() {
     return () => clearInterval(interval)
   }, [tab])
 
+  useEffect(() => {
+    if (tab !== 'logins') return
+    const interval = setInterval(() => {
+      loadLogins()
+    }, 30000)
+    return () => clearInterval(interval)
+  }, [tab])
+
   const summary = useMemo(() => {
     const map = new Map()
     const totals = { pauses: 0, duration: 0 }
@@ -299,6 +376,32 @@ export default function Manager() {
     const hours = String(Math.floor(minutes / 60)).padStart(2, '0')
     const mins = String(minutes % 60).padStart(2, '0')
     return `${hours}:${mins}`
+  }
+
+  const activeSessionsCount = activeSessionsLoading ? '...' : activeSessions.length
+  const activePausesCount = activePausesLoading ? '...' : activePauses.length
+
+  const Modal = ({ open, title, onClose, children }) => {
+    if (!open) return null
+    return (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+        onClick={onClose}
+      >
+        <div
+          className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="flex items-center justify-between gap-4">
+            <h3 className="font-display text-lg font-semibold text-slate-900">{title}</h3>
+            <button type="button" className="btn-ghost" onClick={onClose}>
+              Fechar
+            </button>
+          </div>
+          <div className="mt-4 max-h-[60vh] overflow-y-auto">{children}</div>
+        </div>
+      </div>
+    )
   }
 
   const handleHistoryExport = async (format) => {
@@ -360,6 +463,12 @@ export default function Manager() {
             onClick={() => setTab('dashboard')}
           >
             Dashboard
+          </button>
+          <button
+            className={`btn ${tab === 'pauseSchedules' ? 'bg-brand-600 text-white' : 'btn-ghost'}`}
+            onClick={() => setTab('pauseSchedules')}
+          >
+            Pausas programadas
           </button>
           <button
             className={`btn ${tab === 'logins' ? 'bg-brand-600 text-white' : 'btn-ghost'}`}
@@ -579,9 +688,24 @@ export default function Manager() {
 
         {tab !== 'dashboard' ? null : (
         <div className="grid gap-4 md:grid-cols-3">
-          <StatCard label="Total de pausas" value={summary.totals.pauses} />
-          <StatCard label="Tempo total" value={formatDuration(summary.totals.duration)} />
-          <StatCard label="Agentes" value={summary.rows.length} />
+          <StatCard
+            label="Agentes"
+            value={agents.length}
+            sub="Vinculados ao gerente"
+            onClick={() => setAgentsModalOpen(true)}
+          />
+          <StatCard
+            label="Agentes logados"
+            value={activeSessionsCount}
+            sub="Atualizado em tempo real"
+            onClick={() => setLoggedModalOpen(true)}
+          />
+          <StatCard
+            label="Agentes em pausa"
+            value={activePausesCount}
+            sub="Atualizado em tempo real"
+            onClick={() => setPausedModalOpen(true)}
+          />
         </div>
         )}
 
@@ -668,7 +792,7 @@ export default function Manager() {
         </div>
         )}
 
-        {tab !== 'dashboard' ? null : (
+        {tab === 'pauseSchedules' ? (
         <div className="grid gap-6 lg:grid-cols-[2fr_3fr]">
           <div className="card">
             <h2 className="font-display text-xl font-semibold text-slate-900">Pausas programadas</h2>
@@ -818,7 +942,7 @@ export default function Manager() {
             </div>
           </div>
         </div>
-        )}
+        ) : null}
 
         {tab !== 'dashboard' ? null : (
         <div className="grid gap-6 lg:grid-cols-[3fr_2fr]">
@@ -889,6 +1013,72 @@ export default function Manager() {
         </div>
         )}
       </div>
+
+      <Modal open={agentsModalOpen} title="Agentes vinculados" onClose={() => setAgentsModalOpen(false)}>
+        {agents.length ? (
+          <div className="space-y-2">
+            {agents.map((agent) => (
+              <div key={agent.id} className="flex items-center justify-between rounded-xl border border-slate-100 px-3 py-2">
+                <span className="text-sm font-medium text-slate-900">{agent.full_name}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-500">Nenhum agente encontrado.</p>
+        )}
+      </Modal>
+
+      <Modal open={loggedModalOpen} title="Agentes logados" onClose={() => setLoggedModalOpen(false)}>
+        {activeSessions.length ? (
+          <div className="space-y-2">
+            {activeSessions.map((item) => (
+              <div
+                key={item.id}
+                className="flex items-center justify-between rounded-xl border border-slate-100 px-3 py-2"
+              >
+                <div>
+                  <p className="text-sm font-medium text-slate-900">{item.profiles?.full_name || 'Agente'}</p>
+                  <p className="text-xs text-slate-500">
+                    {item.login_at ? new Date(item.login_at).toLocaleString('pt-BR') : '-'}
+                  </p>
+                </div>
+                <span className="text-sm text-slate-700">
+                  {item.device_type === 'mobile'
+                    ? 'Mobile'
+                    : item.device_type === 'desktop'
+                      ? 'Desktop'
+                      : '-'}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-500">Nenhum agente logado.</p>
+        )}
+      </Modal>
+
+      <Modal open={pausedModalOpen} title="Agentes em pausa" onClose={() => setPausedModalOpen(false)}>
+        {activePauses.length ? (
+          <div className="space-y-2">
+            {activePauses.map((item) => (
+              <div
+                key={item.id}
+                className="flex items-center justify-between rounded-xl border border-slate-100 px-3 py-2"
+              >
+                <div>
+                  <p className="text-sm font-medium text-slate-900">{item.profiles?.full_name || 'Agente'}</p>
+                  <p className="text-xs text-slate-500">
+                    {item.started_at ? new Date(item.started_at).toLocaleString('pt-BR') : '-'}
+                  </p>
+                </div>
+                <span className="text-sm text-slate-700">{item.pause_types?.label || '-'}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-500">Nenhum agente em pausa.</p>
+        )}
+      </Modal>
     </div>
   )
 }

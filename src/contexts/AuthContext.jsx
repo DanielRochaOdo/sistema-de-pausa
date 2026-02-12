@@ -5,6 +5,7 @@ import AuthContext from './authContextStore'
 const PROFILE_CACHE_KEY = 'pause-control.profile'
 const AUTH_STORAGE_KEY = 'pause-control.auth'
 const SESSION_TOKEN_KEY = 'pause-control.session-token'
+const SESSION_LOGIN_AT_KEY = 'pause-control.session-login-at'
 const SLOW_SESSION_MS = 6000
 const SLOW_PROFILE_MS = 6000
 const SESSION_TIMEOUT_MS = 8000
@@ -72,6 +73,28 @@ const writeSessionToken = (token) => {
   }
 }
 
+const readSessionLoginAt = () => {
+  try {
+    const value = localStorage.getItem(SESSION_LOGIN_AT_KEY)
+    return value || null
+  } catch (err) {
+    console.error('[auth] failed to read session login_at', err)
+    return null
+  }
+}
+
+const writeSessionLoginAt = (value) => {
+  try {
+    if (value) {
+      localStorage.setItem(SESSION_LOGIN_AT_KEY, value)
+    } else {
+      localStorage.removeItem(SESSION_LOGIN_AT_KEY)
+    }
+  } catch (err) {
+    console.error('[auth] failed to write session login_at', err)
+  }
+}
+
 const createSessionToken = () => {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID()
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -112,6 +135,7 @@ export function AuthProvider({ children }) {
   const errorRef = useRef(null)
   const sessionTokenRef = useRef(null)
   const forcedSignOutRef = useRef(false)
+  const sessionGuardBusyRef = useRef(false)
   const profileRequestIdRef = useRef(0)
   const lastProfileUserIdRef = useRef(null)
   const slowSessionTimerRef = useRef(null)
@@ -284,6 +308,60 @@ export function AuthProvider({ children }) {
     return null
   }
 
+  const registerSession = async (userId, { closeOthers = true } = {}) => {
+    if (!userId) return null
+    const token = createSessionToken()
+    const nowIso = new Date().toISOString()
+
+    if (closeOthers) {
+      await supabase
+        .from('user_sessions')
+        .update({ logout_at: nowIso })
+        .eq('user_id', userId)
+        .is('logout_at', null)
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('user_sessions')
+        .insert({
+          user_id: userId,
+          session_token: token,
+          device_type: detectDeviceType(),
+          user_agent: navigator.userAgent
+        })
+        .select('session_token, login_at')
+        .single()
+
+      if (error) throw error
+
+      const storedToken = data?.session_token || token
+      sessionTokenRef.current = storedToken
+      writeSessionToken(storedToken)
+      if (data?.login_at) writeSessionLoginAt(data.login_at)
+      return { token: storedToken, login_at: data?.login_at || nowIso }
+    } catch (err) {
+      const message = String(err?.message || err)
+      if (message.includes('session_token') && message.includes('does not exist')) {
+        const { data, error } = await supabase
+          .from('user_sessions')
+          .insert({
+            user_id: userId,
+            device_type: detectDeviceType(),
+            user_agent: navigator.userAgent
+          })
+          .select('login_at')
+          .single()
+        if (error) throw error
+        writeSessionLoginAt(data?.login_at || nowIso)
+        sessionTokenRef.current = null
+        writeSessionToken(null)
+        return { token: null, login_at: data?.login_at || nowIso }
+      }
+      throw err
+    }
+  }
+
   const bootstrapSession = async () => {
     setLoading(true)
     setError(null)
@@ -331,6 +409,13 @@ export function AuthProvider({ children }) {
           setProfileFetched(true)
         }
         lastProfileUserIdRef.current = userId
+        if (!sessionTokenRef.current && !readSessionToken()) {
+          try {
+            await registerSession(userId, { closeOthers: true })
+          } catch (sessionErr) {
+            console.warn('[auth] failed to register session on init', sessionErr)
+          }
+        }
       } else if (!cachedSession) {
         setProfile(null)
         writeCachedProfile(null)
@@ -385,6 +470,10 @@ export function AuthProvider({ children }) {
           writeCachedProfile(null)
           setProfileFetched(false)
           lastProfileUserIdRef.current = null
+          writeSessionToken(null)
+          writeSessionLoginAt(null)
+          sessionTokenRef.current = null
+          forcedSignOutRef.current = false
         } else {
           const currentProfile = profileRef.current
 
@@ -479,6 +568,75 @@ export function AuthProvider({ children }) {
     }
   }, [session?.user?.id])
 
+  useEffect(() => {
+    const userId = session?.user?.id
+    if (!userId) return
+
+    let alive = true
+
+    const forceSignOut = async () => {
+      if (forcedSignOutRef.current) return
+      forcedSignOutRef.current = true
+      await signOut()
+    }
+
+    const checkLatestSession = async () => {
+      if (!alive || sessionGuardBusyRef.current || forcedSignOutRef.current) return
+      sessionGuardBusyRef.current = true
+      try {
+        const { data, error } = await supabase
+          .from('user_sessions')
+          .select('session_token, login_at, logout_at')
+          .eq('user_id', userId)
+          .order('login_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        if (error) {
+          console.warn('[auth] session guard failed', error)
+          return
+        }
+        if (!data) return
+
+        const localToken = sessionTokenRef.current || readSessionToken()
+        const localLoginAt = readSessionLoginAt()
+
+        if (localToken && data.session_token && data.session_token !== localToken) {
+          await forceSignOut()
+          return
+        }
+
+        if (localToken && data.session_token === localToken && data.logout_at) {
+          await forceSignOut()
+          return
+        }
+
+        if (!localToken && localLoginAt && data.login_at) {
+          const localTime = new Date(localLoginAt).getTime()
+          const remoteTime = new Date(data.login_at).getTime()
+          if (remoteTime > localTime + 1000) {
+            await forceSignOut()
+            return
+          }
+        }
+
+        if (!localToken && !localLoginAt && data.login_at) {
+          writeSessionLoginAt(data.login_at)
+        }
+      } catch (err) {
+        console.warn('[auth] session guard exception', err)
+      } finally {
+        sessionGuardBusyRef.current = false
+      }
+    }
+
+    checkLatestSession()
+    const interval = setInterval(checkLatestSession, 15000)
+    return () => {
+      alive = false
+      clearInterval(interval)
+    }
+  }, [session?.user?.id])
+
   const resolveLoginIdentifier = async (identifier) => {
     const value = String(identifier || '').trim()
     if (!value) throw new Error('Informe seu email ou nome completo')
@@ -519,20 +677,7 @@ export function AuthProvider({ children }) {
       const userId = currentSession?.user?.id || null
       if (userId) {
         try {
-          const token = createSessionToken()
-          await supabase
-            .from('user_sessions')
-            .update({ logout_at: new Date().toISOString() })
-            .eq('user_id', userId)
-            .is('logout_at', null)
-          await supabase.from('user_sessions').insert({
-            user_id: userId,
-            session_token: token,
-            device_type: detectDeviceType(),
-            user_agent: navigator.userAgent
-          })
-          sessionTokenRef.current = token
-          writeSessionToken(token)
+          await registerSession(userId, { closeOthers: true })
         } catch (sessionErr) {
           console.warn('[auth] failed to register session', sessionErr)
         }
@@ -558,12 +703,15 @@ export function AuthProvider({ children }) {
       const userId = sessionRef.current?.user?.id
       const token = sessionTokenRef.current || readSessionToken()
       if (userId) {
-        await supabase
+        const query = supabase
           .from('user_sessions')
           .update({ logout_at: new Date().toISOString() })
           .eq('user_id', userId)
-          .eq('session_token', token)
           .is('logout_at', null)
+        if (token) {
+          query.eq('session_token', token)
+        }
+        await query
       }
     } catch (sessionErr) {
       console.warn('[auth] failed to close session', sessionErr)
@@ -578,6 +726,7 @@ export function AuthProvider({ children }) {
     clearSlowTimers()
     writeCachedProfile(null)
     writeSessionToken(null)
+    writeSessionLoginAt(null)
     sessionTokenRef.current = null
     forcedSignOutRef.current = false
   }

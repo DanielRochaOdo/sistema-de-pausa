@@ -106,6 +106,16 @@ export async function listPauseSchedules(agentId) {
   return data
 }
 
+export async function listActivePauses() {
+  const { data, error } = await supabase
+    .from('pauses')
+    .select('id, agent_id, started_at, pause_type_id, profiles(full_name, role), pause_types(label, limit_minutes)')
+    .is('ended_at', null)
+    .order('started_at', { ascending: false })
+  if (error) throw error
+  return (data || []).filter((row) => row.profiles?.role === 'AGENTE')
+}
+
 export async function upsertPauseSchedule(payload) {
   const { data, error } = await supabase
     .from('pause_schedules')

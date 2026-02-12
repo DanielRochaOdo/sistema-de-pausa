@@ -75,6 +75,11 @@ export async function updatePauseType(id, updates) {
   return data
 }
 
+export async function deletePauseType(id) {
+  const { error } = await supabase.from('pause_types').delete().eq('id', id)
+  if (error) throw error
+}
+
 export async function createSector(payload) {
   const { data, error } = await supabase.from('sectors').insert(payload).select().single()
   if (error) throw error
@@ -92,10 +97,54 @@ export async function updateSector(id, updates) {
   return data
 }
 
+export async function deleteSector(id) {
+  const { error } = await supabase.from('sectors').delete().eq('id', id)
+  if (error) throw error
+}
+
 export async function createUserWithEdgeFunction(payload) {
   const { data, error } = await supabase.functions.invoke('admin-create-user', {
     body: payload
   })
-  if (error) throw error
+  if (error) {
+    let message = error.message || 'Falha ao criar usuario'
+    try {
+      const response = error.context
+      if (response?.json) {
+        const parsed = await response.json()
+        if (parsed?.error) message = parsed.error
+      }
+    } catch (_) {
+      // ignore parse errors
+    }
+    throw new Error(message)
+  }
+  if (data?.error) {
+    throw new Error(data.error)
+  }
+  return data
+}
+
+export async function deleteUserWithEdgeFunction(userId) {
+  if (!userId) throw new Error('Missing user id')
+  const { data, error } = await supabase.functions.invoke('admin-delete-user', {
+    body: { user_id: userId }
+  })
+  if (error) {
+    let message = error.message || 'Falha ao excluir usuario'
+    try {
+      const response = error.context
+      if (response?.json) {
+        const parsed = await response.json()
+        if (parsed?.error) message = parsed.error
+      }
+    } catch (_) {
+      // ignore parse errors
+    }
+    throw new Error(message)
+  }
+  if (data?.error) {
+    throw new Error(data.error)
+  }
   return data
 }

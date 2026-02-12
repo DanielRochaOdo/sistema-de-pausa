@@ -1,7 +1,7 @@
-﻿import { useEffect, useState } from 'react'
+﻿import { useEffect, useRef, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { useAuth } from '../contexts/useAuth'
-import { getLatePausesSummary, markAllLatePausesAsRead } from '../services/apiPauses'
+import { getLatePausesSummary, listActivePauses, listPauseSchedules, markAllLatePausesAsRead } from '../services/apiPauses'
 import { supabase } from '../services/supabaseClient'
 import { formatDateTime, formatDuration, startOfToday } from '../utils/format'
 
@@ -10,11 +10,18 @@ export default function TopNav({ agentControls }) {
   const [latePauses, setLatePauses] = useState([])
   const [lateCount, setLateCount] = useState(0)
   const [bellOpen, setBellOpen] = useState(false)
+  const [activePauses, setActivePauses] = useState([])
+  const [pauseSchedules, setPauseSchedules] = useState([])
+  const [activeLatePauses, setActiveLatePauses] = useState([])
+  const [activeLateNow, setActiveLateNow] = useState(Date.now())
+  const prevTotalLateRef = useRef(0)
 
   const showAgent = profile?.role === 'AGENTE'
   const showManager = profile?.role === 'GERENTE' || profile?.role === 'ADMIN'
   const showAdmin = profile?.role === 'ADMIN'
   const showBell = profile?.role === 'GERENTE'
+  const activeLateCount = activeLatePauses.length
+  const totalLateCount = lateCount + activeLateCount
 
   const loadLatePauses = async () => {
     try {
@@ -26,9 +33,29 @@ export default function TopNav({ agentControls }) {
     }
   }
 
+  const loadActivePauses = async () => {
+    try {
+      const data = await listActivePauses()
+      setActivePauses(data || [])
+    } catch (err) {
+      console.error('[notifications] failed to load active pauses', err?.message || err)
+    }
+  }
+
+  const loadPauseSchedules = async () => {
+    try {
+      const data = await listPauseSchedules()
+      setPauseSchedules(data || [])
+    } catch (err) {
+      console.error('[notifications] failed to load pause schedules', err?.message || err)
+    }
+  }
+
   useEffect(() => {
     if (!showBell) return
     loadLatePauses()
+    loadActivePauses()
+    loadPauseSchedules()
   }, [showBell])
 
   useEffect(() => {
@@ -67,9 +94,37 @@ export default function TopNav({ agentControls }) {
       )
       .subscribe()
 
+    const activePausesChannel = supabase
+      .channel(`active-pauses-${profile.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'pauses'
+        },
+        () => loadActivePauses()
+      )
+      .subscribe()
+
+    const schedulesChannel = supabase
+      .channel(`pause-schedules-${profile.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'pause_schedules'
+        },
+        () => loadPauseSchedules()
+      )
+      .subscribe()
+
     return () => {
       supabase.removeChannel(channel)
       supabase.removeChannel(pausesChannel)
+      supabase.removeChannel(activePausesChannel)
+      supabase.removeChannel(schedulesChannel)
     }
   }, [showBell, profile?.id])
 
@@ -82,9 +137,61 @@ export default function TopNav({ agentControls }) {
     if (!showBell) return
     const interval = setInterval(() => {
       loadLatePauses()
+      loadActivePauses()
     }, 15000)
     return () => clearInterval(interval)
   }, [showBell])
+
+  useEffect(() => {
+    if (!showBell) return
+    const interval = setInterval(() => setActiveLateNow(Date.now()), 1000)
+    return () => clearInterval(interval)
+  }, [showBell])
+
+  useEffect(() => {
+    if (!showBell) return
+    const prev = prevTotalLateRef.current
+    if (totalLateCount > 0 && totalLateCount > prev) {
+      setBellOpen(true)
+    }
+    prevTotalLateRef.current = totalLateCount
+  }, [showBell, totalLateCount])
+
+  useEffect(() => {
+    if (!showBell) return
+    const scheduleMap = new Map(
+      (pauseSchedules || []).map((schedule) => [
+        `${schedule.agent_id}:${schedule.pause_type_id}`,
+        schedule.duration_minutes
+      ])
+    )
+
+    const items = (activePauses || [])
+      .map((pause) => {
+        const limitMinutes =
+          scheduleMap.get(`${pause.agent_id}:${pause.pause_type_id}`) ??
+          pause.pause_types?.limit_minutes ??
+          null
+        if (!limitMinutes || limitMinutes <= 0) return null
+        const elapsedSeconds = Math.max(
+          0,
+          Math.floor((activeLateNow - new Date(pause.started_at).getTime()) / 1000)
+        )
+        const limitSeconds = limitMinutes * 60
+        if (elapsedSeconds <= limitSeconds) return null
+        return {
+          pause_id: pause.id,
+          agent_name: pause.profiles?.full_name || 'Agente',
+          pause_type_label: pause.pause_types?.label || '-',
+          started_at: pause.started_at,
+          elapsed_seconds: elapsedSeconds,
+          limit_seconds: limitSeconds
+        }
+      })
+      .filter(Boolean)
+
+    setActiveLatePauses(items)
+  }, [showBell, activePauses, pauseSchedules, activeLateNow])
 
   const handleMarkAllAsRead = async () => {
     try {
@@ -151,9 +258,9 @@ export default function TopNav({ agentControls }) {
                         strokeLinejoin="round"
                       />
                     </svg>
-                    {lateCount > 0 ? (
+                    {totalLateCount > 0 ? (
                       <span className="absolute -top-1 -right-1 rounded-full bg-red-500 px-1.5 text-[10px] text-white">
-                        {lateCount}
+                        {totalLateCount}
                       </span>
                     ) : null}
                   </button>
@@ -191,7 +298,9 @@ export default function TopNav({ agentControls }) {
             <div className="flex items-center justify-between">
               <p className="text-sm font-semibold text-slate-900">Atrasos de pausa</p>
               <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-500">{lateCount} hoje</span>
+                <span className="text-xs text-slate-500">
+                  {activeLateCount} em andamento • {lateCount} finalizadas hoje
+                </span>
                 <button
                   type="button"
                   className="btn-ghost text-xs"
@@ -203,6 +312,17 @@ export default function TopNav({ agentControls }) {
               </div>
             </div>
             <div className="mt-3 space-y-2">
+              {activeLatePauses.map((pause) => (
+                <div key={pause.pause_id} className="rounded-lg border border-red-200 bg-red-50 px-2 py-2">
+                  <p className="text-xs font-semibold text-slate-900">
+                    {pause.agent_name} - {pause.pause_type_label}
+                  </p>
+                  <p className="text-[11px] text-slate-600">
+                    Tempo: {formatDuration(pause.elapsed_seconds)} • Limite:{' '}
+                    {formatDuration(pause.limit_seconds)} • Em andamento
+                  </p>
+                </div>
+              ))}
               {latePauses.map((pause) => (
                 <div key={pause.pause_id} className="rounded-lg border border-amber-100 bg-amber-50 px-2 py-2">
                   <p className="text-xs font-semibold text-slate-900">
@@ -213,7 +333,9 @@ export default function TopNav({ agentControls }) {
                   </p>
                 </div>
               ))}
-              {!latePauses.length ? <p className="text-xs text-slate-500">Sem atrasos hoje.</p> : null}
+              {!latePauses.length && !activeLatePauses.length ? (
+                <p className="text-xs text-slate-500">Sem atrasos hoje.</p>
+              ) : null}
             </div>
           </div>
         ) : null}
@@ -221,3 +343,4 @@ export default function TopNav({ agentControls }) {
     </div>
   )
 }
+

@@ -129,7 +129,11 @@ serve(async (req) => {
   })
 
   if (createError || !created?.user) {
-    return jsonResponse(400, { error: createError?.message || 'Failed to create user' })
+    return jsonResponse(400, {
+      error: createError?.message || 'Failed to create user',
+      code: createError?.code || null,
+      status: createError?.status || null
+    })
   }
 
   const { error: insertError } = await adminClient.from('profiles').upsert(
@@ -145,7 +149,10 @@ serve(async (req) => {
   )
 
   if (insertError) {
-    return jsonResponse(400, { error: insertError.message || 'Failed to create profile' })
+    return jsonResponse(400, {
+      error: insertError.message || 'Failed to create profile',
+      code: insertError.code || null
+    })
   }
 
   return jsonResponse(200, { id: created.user.id })

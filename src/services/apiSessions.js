@@ -16,3 +16,13 @@ export async function listAgentLoginHistory(agentId, { limit = 30, offset = 0 } 
   if (error) throw error
   return data
 }
+
+export async function listActiveAgentSessions() {
+  const { data, error } = await supabase
+    .from('user_sessions')
+    .select('id, user_id, login_at, device_type, profiles(full_name, role)')
+    .is('logout_at', null)
+    .order('login_at', { ascending: false })
+  if (error) throw error
+  return (data || []).filter((row) => row.profiles?.role === 'AGENTE')
+}

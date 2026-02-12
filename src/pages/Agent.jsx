@@ -26,6 +26,7 @@ export default function Agent() {
   const [starting, setStarting] = useState(false)
   const [ending, setEnding] = useState(false)
   const [now, setNow] = useState(Date.now())
+  const [pauseModalOpen, setPauseModalOpen] = useState(false)
 
   const loadSchedules = async (userId) => {
     if (!userId) return
@@ -97,6 +98,14 @@ export default function Agent() {
     if (!activePause) return
     const interval = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(interval)
+  }, [activePause])
+
+  useEffect(() => {
+    if (activePause) {
+      setPauseModalOpen(true)
+    } else {
+      setPauseModalOpen(false)
+    }
   }, [activePause])
 
   const elapsedSeconds = useMemo(() => {
@@ -273,6 +282,38 @@ export default function Agent() {
           </div>
         </div>
       </div>
+
+      {pauseModalOpen && activePause ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 px-6 py-10 text-white">
+          <div className="w-full max-w-2xl rounded-3xl border border-white/10 bg-white/5 p-8 backdrop-blur">
+            <p className="text-xs uppercase tracking-[0.35em] text-emerald-200">Pausa em andamento</p>
+            <h2 className="mt-2 text-2xl font-semibold">{activeLabel}</h2>
+            <div className="mt-6 text-center">
+              <p className="text-[11px] uppercase tracking-[0.3em] text-white/60">Cronometro</p>
+              <p className="mt-2 text-5xl font-semibold">{formatDuration(elapsedSeconds)}</p>
+            </div>
+            <div className="mt-6">
+              <label className="text-xs uppercase tracking-[0.2em] text-white/70">Observacao</label>
+              <textarea
+                className="mt-2 w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm text-white placeholder-white/50"
+                rows={3}
+                value={notes}
+                onChange={(event) => setNotes(event.target.value)}
+                placeholder="Escreva uma observacao (opcional)"
+              />
+            </div>
+            <div className="mt-6 flex justify-center">
+              <button
+                className="btn-secondary h-11 px-8 text-base"
+                onClick={handleEnd}
+                disabled={ending}
+              >
+                {ending ? 'Encerrando...' : 'Finalizar pausa'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

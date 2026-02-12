@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import TopNav from '../components/TopNav'
+import { useAuth } from '../contexts/useAuth'
 import {
   createPauseType,
   createSector,
   createUserWithEdgeFunction,
+  deleteUserWithEdgeFunction,
+  deletePauseType,
+  deleteSector,
   listManagers,
   listPauseTypes,
   listProfiles,
@@ -44,6 +48,7 @@ const normalizeTime = (value) => {
 }
 
 export default function Admin() {
+  const { profile: currentProfile } = useAuth()
   const [tab, setTab] = useState('users')
   const [profiles, setProfiles] = useState([])
   const [managers, setManagers] = useState([])
@@ -130,6 +135,32 @@ export default function Admin() {
     }
   }
 
+  const handleDeleteUser = async (profile) => {
+    if (!profile?.id) return
+    if (profile.role !== 'AGENTE') {
+      setError('Somente agentes podem ser excluidos.')
+      return
+    }
+    if (currentProfile?.id && profile.id === currentProfile.id) {
+      setError('Nao e possivel excluir o usuario logado.')
+      return
+    }
+    const confirmed = window.confirm(`Excluir agente ${profile.full_name}? Essa acao e definitiva.`)
+    if (!confirmed) return
+    setError('')
+    setSuccess('')
+    setBusy(true)
+    try {
+      await deleteUserWithEdgeFunction(profile.id)
+      setSuccess('Agente excluido.')
+      await refreshAll()
+    } catch (err) {
+      setError(err.message || 'Falha ao excluir agente')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const handleTypeUpdate = async (type) => {
     setError('')
     setSuccess('')
@@ -144,6 +175,24 @@ export default function Admin() {
       await refreshAll()
     } catch (err) {
       setError(err.message || 'Falha ao atualizar tipo')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleTypeDelete = async (type) => {
+    if (!type?.id) return
+    const confirmed = window.confirm(`Excluir o tipo de pausa ${type.label}?`)
+    if (!confirmed) return
+    setError('')
+    setSuccess('')
+    setBusy(true)
+    try {
+      await deletePauseType(type.id)
+      setSuccess('Tipo removido.')
+      await refreshAll()
+    } catch (err) {
+      setError(err.message || 'Falha ao remover tipo')
     } finally {
       setBusy(false)
     }
@@ -180,6 +229,24 @@ export default function Admin() {
       await refreshAll()
     } catch (err) {
       setError(err.message || 'Falha ao atualizar setor')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleSectorDelete = async (sector) => {
+    if (!sector?.id) return
+    const confirmed = window.confirm(`Excluir o setor ${sector.label}?`)
+    if (!confirmed) return
+    setError('')
+    setSuccess('')
+    setBusy(true)
+    try {
+      await deleteSector(sector.id)
+      setSuccess('Setor removido.')
+      await refreshAll()
+    } catch (err) {
+      setError(err.message || 'Falha ao remover setor')
     } finally {
       setBusy(false)
     }
@@ -517,6 +584,16 @@ export default function Admin() {
                           >
                             Salvar
                           </button>
+                          {profile.role === 'AGENTE' ? (
+                            <button
+                              className="btn-ghost text-red-600"
+                              type="button"
+                              onClick={() => handleDeleteUser(profile)}
+                              disabled={busy}
+                            >
+                              Excluir
+                            </button>
+                          ) : null}
                         </td>
                       </tr>
                     ))}
@@ -624,6 +701,14 @@ export default function Admin() {
                           >
                             Salvar
                           </button>
+                          <button
+                            className="btn-ghost text-red-600"
+                            type="button"
+                            onClick={() => handleTypeDelete(type)}
+                            disabled={busy}
+                          >
+                            Excluir
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -708,6 +793,14 @@ export default function Admin() {
                             disabled={busy}
                           >
                             Salvar
+                          </button>
+                          <button
+                            className="btn-ghost text-red-600"
+                            type="button"
+                            onClick={() => handleSectorDelete(sector)}
+                            disabled={busy}
+                          >
+                            Excluir
                           </button>
                         </td>
                       </tr>
