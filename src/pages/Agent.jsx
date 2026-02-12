@@ -3,6 +3,7 @@ import TopNav from '../components/TopNav'
 import StatCard from '../components/StatCard'
 import { useAuth } from '../contexts/useAuth'
 import { endPause, getActivePause, getPauseTypes, listRecentPauses, listPauseSchedules, startPause } from '../services/apiPauses'
+import { supabase } from '../services/supabaseClient'
 import { formatDateTime, formatDuration } from '../utils/format'
 import { friendlyError } from '../utils/errors'
 
@@ -25,6 +26,17 @@ export default function Agent() {
   const [starting, setStarting] = useState(false)
   const [ending, setEnding] = useState(false)
   const [now, setNow] = useState(Date.now())
+
+  const loadSchedules = async (userId) => {
+    if (!userId) return
+    try {
+      const schedules = await listPauseSchedules(userId)
+      setPauseSchedules(schedules || [])
+      setScheduleError('')
+    } catch (err) {
+      setScheduleError(friendlyError(err, 'Falha ao carregar horarios'))
+    }
+  }
 
   const loadAll = async () => {
     if (!profile?.id) return
@@ -56,6 +68,29 @@ export default function Agent() {
 
   useEffect(() => {
     loadAll()
+  }, [profile?.id])
+
+  useEffect(() => {
+    if (!profile?.id) return
+    const channel = supabase
+      .channel(`agent-schedules-${profile.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'pause_schedules',
+          filter: `agent_id=eq.${profile.id}`
+        },
+        () => {
+          loadSchedules(profile.id)
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
   }, [profile?.id])
 
   useEffect(() => {
