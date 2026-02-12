@@ -34,11 +34,18 @@ const writeCachedProfile = (profile) => {
   }
 }
 
-const clearAuthStorage = () => {
+const readCachedSession = () => {
   try {
-    localStorage.removeItem(AUTH_STORAGE_KEY)
+    const raw = localStorage.getItem(AUTH_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    const session = parsed?.currentSession || parsed?.session || parsed
+    if (!session?.access_token || !session?.user?.id) return null
+    if (session.expires_at && Date.now() / 1000 > session.expires_at) return null
+    return session
   } catch (err) {
-    console.error('[auth] failed to clear auth storage', err)
+    console.error('[auth] failed to read auth storage', err)
+    return null
   }
 }
 
@@ -98,16 +105,18 @@ export function AuthProvider({ children }) {
     }
   }
 
-  const startSlowSessionTimer = () => {
+  const startSlowSessionTimer = (shouldStart = true) => {
     setSlowSession(false)
+    if (!shouldStart) return
     slowSessionTimerRef.current = setTimeout(() => {
       console.info('[auth] slowSession true after 6s')
       setSlowSession(true)
     }, SLOW_SESSION_MS)
   }
 
-  const startSlowProfileTimer = () => {
+  const startSlowProfileTimer = (shouldStart = true) => {
     setSlowProfile(false)
+    if (!shouldStart) return
     slowProfileTimerRef.current = setTimeout(() => {
       console.info('[auth] slowProfile true after 6s')
       setSlowProfile(true)
@@ -126,11 +135,17 @@ export function AuthProvider({ children }) {
     }
 
     const requestId = ++profileRequestIdRef.current
-    setProfileLoading(true)
-    setError(null)
-    startSlowProfileTimer()
-
     const cached = readCachedProfile(userId)
+    const hasCached = !!cached
+
+    if (!hasCached) {
+      setProfileLoading(true)
+    } else {
+      setProfileLoading(false)
+    }
+    setError(null)
+    startSlowProfileTimer(!hasCached)
+
     if (cached) {
       setProfile(cached)
       writeCachedProfile(cached)
@@ -154,7 +169,9 @@ export function AuthProvider({ children }) {
 
       if (profileError) {
         console.error('[auth] loadProfile error', profileError)
-        setError(JSON.stringify(profileError))
+        if (!hasCached) {
+          setError(JSON.stringify(profileError))
+        }
         return null
       }
 
@@ -178,12 +195,16 @@ export function AuthProvider({ children }) {
         console.warn('[auth] loadProfile timeout, keeping cached profile')
       } else {
         console.error('[auth] loadProfile exception', err)
-        setError(message)
+        if (!hasCached) {
+          setError(message)
+        }
       }
       return null
     } finally {
       if (requestId === profileRequestIdRef.current) {
-        setProfileLoading(false)
+        if (!hasCached) {
+          setProfileLoading(false)
+        }
         setProfileFetched(true)
         setSlowProfile(false)
       }
@@ -198,7 +219,16 @@ export function AuthProvider({ children }) {
     setLoading(true)
     setError(null)
     setProfileFetched(false)
-    startSlowSessionTimer()
+    const cachedSession = readCachedSession()
+    const cachedUserId = cachedSession?.user?.id || null
+    const cachedProfile = cachedUserId ? readCachedProfile(cachedUserId) : null
+
+    if (cachedSession) {
+      setSession(cachedSession)
+      if (cachedProfile) setProfile(cachedProfile)
+    }
+
+    startSlowSessionTimer(!cachedSession)
 
     try {
       console.info('[auth] init start')
@@ -209,21 +239,29 @@ export function AuthProvider({ children }) {
       )
       if (sessionError) {
         console.error('[auth] getSession error', sessionError)
-        setError(JSON.stringify(sessionError))
+        if (!cachedSession) {
+          setError(JSON.stringify(sessionError))
+        }
       }
 
       const currentSession = data?.session ?? null
-      setSession(currentSession)
+      if (currentSession || !cachedSession) {
+        setSession(currentSession)
+      }
 
-      const userId = currentSession?.user?.id || null
+      const userId = currentSession?.user?.id || cachedUserId || null
       if (userId) {
         if (lastProfileUserIdRef.current !== userId) {
-          const cached = readCachedProfile(userId)
+          const cached = cachedProfile || readCachedProfile(userId)
           if (cached) setProfile(cached)
         }
-        await loadProfile(userId)
+        if (currentSession || !cachedProfile) {
+          await loadProfile(userId)
+        } else {
+          setProfileFetched(true)
+        }
         lastProfileUserIdRef.current = userId
-      } else {
+      } else if (!cachedSession) {
         setProfile(null)
         writeCachedProfile(null)
       }
@@ -231,15 +269,18 @@ export function AuthProvider({ children }) {
     } catch (err) {
       const message = String(err?.message || err)
       if (message.includes('_TIMEOUT')) {
-        console.warn('[auth] getSession timeout, clearing auth storage')
-        clearAuthStorage()
+        console.warn('[auth] getSession timeout, keeping cached session')
       } else {
         console.error('[auth] init exception', err)
-        setError(message)
+        if (!cachedSession) {
+          setError(message)
+        }
       }
-      setSession(null)
-      setProfile(null)
-      writeCachedProfile(null)
+      if (!cachedSession) {
+        setSession(null)
+        setProfile(null)
+        writeCachedProfile(null)
+      }
     } finally {
       setLoading(false)
       setSlowSession(false)
