@@ -1,5 +1,7 @@
 -- Migration: extend agent login list with last logout and daily total
 
+drop function if exists public.list_agent_logins();
+
 create or replace function public.list_agent_logins()
 returns table (
   agent_id uuid,
