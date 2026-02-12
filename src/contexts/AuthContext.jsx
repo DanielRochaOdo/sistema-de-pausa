@@ -216,7 +216,6 @@ export function AuthProvider({ children }) {
       data: { subscription }
     } = supabase.auth.onAuthStateChange(async (event, nextSession) => {
       console.info('[auth] onAuthStateChange event=', event)
-      if (event === 'INITIAL_SESSION') return
 
       setLoading(true)
       setError(null)
@@ -231,23 +230,26 @@ export function AuthProvider({ children }) {
           writeCachedProfile(null)
           setProfileFetched(false)
           lastProfileUserIdRef.current = null
-          return
+        } else {
+          const currentProfile = profileRef.current
+
+          if (
+            nextUserId !== lastProfileUserIdRef.current ||
+            currentProfile?.id !== nextUserId
+          ) {
+            await loadProfile(nextUserId)
+            lastProfileUserIdRef.current = nextUserId
+          }
         }
 
-        const currentProfile = profileRef.current
-        if (
-          nextUserId === lastProfileUserIdRef.current &&
-          currentProfile?.id === nextUserId &&
-          !errorRef.current
-        ) {
-          return
-        }
+      } catch (err) {
+        console.error('[auth] auth state change error', err)
+        setError(String(err?.message || err))
 
-        await loadProfile(nextUserId)
-        lastProfileUserIdRef.current = nextUserId
       } finally {
         setLoading(false)
         setSlowSession(false)
+
         if (slowSessionTimerRef.current) {
           clearTimeout(slowSessionTimerRef.current)
           slowSessionTimerRef.current = null
