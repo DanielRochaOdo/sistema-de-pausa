@@ -4,6 +4,7 @@ import AuthContext from './authContextStore'
 
 const PROFILE_CACHE_KEY = 'pause-control.profile'
 const AUTH_STORAGE_KEY = 'pause-control.auth'
+const SESSION_TOKEN_KEY = 'pause-control.session-token'
 const SLOW_SESSION_MS = 6000
 const SLOW_PROFILE_MS = 6000
 const SESSION_TIMEOUT_MS = 8000
@@ -49,6 +50,33 @@ const readCachedSession = () => {
   }
 }
 
+const readSessionToken = () => {
+  try {
+    const token = localStorage.getItem(SESSION_TOKEN_KEY)
+    return token || null
+  } catch (err) {
+    console.error('[auth] failed to read session token', err)
+    return null
+  }
+}
+
+const writeSessionToken = (token) => {
+  try {
+    if (token) {
+      localStorage.setItem(SESSION_TOKEN_KEY, token)
+    } else {
+      localStorage.removeItem(SESSION_TOKEN_KEY)
+    }
+  } catch (err) {
+    console.error('[auth] failed to write session token', err)
+  }
+}
+
+const createSessionToken = () => {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID()
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
 const withTimeout = (promise, ms, label) => {
   let timeoutId
   const timeout = new Promise((_, reject) => {
@@ -82,6 +110,8 @@ export function AuthProvider({ children }) {
   const profileRef = useRef(null)
   const sessionRef = useRef(null)
   const errorRef = useRef(null)
+  const sessionTokenRef = useRef(null)
+  const forcedSignOutRef = useRef(false)
   const profileRequestIdRef = useRef(0)
   const lastProfileUserIdRef = useRef(null)
   const slowSessionTimerRef = useRef(null)
@@ -98,6 +128,10 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     errorRef.current = error
   }, [error])
+
+  useEffect(() => {
+    sessionTokenRef.current = readSessionToken()
+  }, [])
 
   const clearSlowTimers = () => {
     if (slowSessionTimerRef.current) {
@@ -220,6 +254,36 @@ export function AuthProvider({ children }) {
     }
   }
 
+  const ensureSessionToken = async (userId) => {
+    const existing = sessionTokenRef.current || readSessionToken()
+    if (existing) {
+      sessionTokenRef.current = existing
+      return existing
+    }
+    if (!userId) return null
+    try {
+      const { data, error: tokenError } = await supabase
+        .from('user_sessions')
+        .select('session_token')
+        .eq('user_id', userId)
+        .order('login_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (tokenError) {
+        console.warn('[auth] failed to load session token', tokenError)
+        return null
+      }
+      if (data?.session_token) {
+        sessionTokenRef.current = data.session_token
+        writeSessionToken(data.session_token)
+        return data.session_token
+      }
+    } catch (err) {
+      console.warn('[auth] failed to ensure session token', err)
+    }
+    return null
+  }
+
   const bootstrapSession = async () => {
     setLoading(true)
     setError(null)
@@ -231,6 +295,7 @@ export function AuthProvider({ children }) {
     if (cachedSession) {
       setSession(cachedSession)
       if (cachedProfile) setProfile(cachedProfile)
+      await ensureSessionToken(cachedUserId)
     }
 
     startSlowSessionTimer(!cachedSession)
@@ -353,6 +418,67 @@ export function AuthProvider({ children }) {
     }
   }, [])
 
+  useEffect(() => {
+    const userId = session?.user?.id
+    if (!userId) return
+
+    let isMounted = true
+
+    const forceSignOut = async () => {
+      if (forcedSignOutRef.current) return
+      forcedSignOutRef.current = true
+      await signOut()
+    }
+
+    const init = async () => {
+      await ensureSessionToken(userId)
+      if (!isMounted) return
+
+      const channel = supabase
+        .channel(`user-sessions-${userId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'user_sessions',
+            filter: `user_id=eq.${userId}`
+          },
+          (payload) => {
+            const token = sessionTokenRef.current
+            if (!token || forcedSignOutRef.current) return
+
+            if (payload.eventType === 'INSERT') {
+              if (payload.new?.session_token && payload.new.session_token !== token) {
+                forceSignOut()
+              }
+            }
+
+            if (payload.eventType === 'UPDATE') {
+              if (payload.new?.session_token === token && payload.new?.logout_at) {
+                forceSignOut()
+              }
+            }
+          }
+        )
+        .subscribe()
+
+      return () => {
+        supabase.removeChannel(channel)
+      }
+    }
+
+    let cleanup
+    init().then((dispose) => {
+      cleanup = dispose
+    })
+
+    return () => {
+      isMounted = false
+      if (cleanup) cleanup()
+    }
+  }, [session?.user?.id])
+
   const resolveLoginIdentifier = async (identifier) => {
     const value = String(identifier || '').trim()
     if (!value) throw new Error('Informe seu email ou nome completo')
@@ -393,6 +519,7 @@ export function AuthProvider({ children }) {
       const userId = currentSession?.user?.id || null
       if (userId) {
         try {
+          const token = createSessionToken()
           await supabase
             .from('user_sessions')
             .update({ logout_at: new Date().toISOString() })
@@ -400,9 +527,12 @@ export function AuthProvider({ children }) {
             .is('logout_at', null)
           await supabase.from('user_sessions').insert({
             user_id: userId,
+            session_token: token,
             device_type: detectDeviceType(),
             user_agent: navigator.userAgent
           })
+          sessionTokenRef.current = token
+          writeSessionToken(token)
         } catch (sessionErr) {
           console.warn('[auth] failed to register session', sessionErr)
         }
@@ -426,11 +556,13 @@ export function AuthProvider({ children }) {
   const signOut = async () => {
     try {
       const userId = sessionRef.current?.user?.id
+      const token = sessionTokenRef.current || readSessionToken()
       if (userId) {
         await supabase
           .from('user_sessions')
           .update({ logout_at: new Date().toISOString() })
           .eq('user_id', userId)
+          .eq('session_token', token)
           .is('logout_at', null)
       }
     } catch (sessionErr) {
@@ -445,6 +577,9 @@ export function AuthProvider({ children }) {
     setSlowProfile(false)
     clearSlowTimers()
     writeCachedProfile(null)
+    writeSessionToken(null)
+    sessionTokenRef.current = null
+    forcedSignOutRef.current = false
   }
 
   const refreshProfile = async () => {

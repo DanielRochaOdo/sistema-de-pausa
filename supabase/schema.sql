@@ -65,6 +65,7 @@ create table if not exists public.user_sessions (
   user_id uuid not null references public.profiles(id) on delete cascade,
   login_at timestamptz not null default now(),
   logout_at timestamptz null,
+  session_token uuid not null default gen_random_uuid(),
   device_type text not null check (device_type in ('mobile', 'desktop')),
   user_agent text null,
   created_at timestamptz default now()
@@ -103,6 +104,9 @@ create index if not exists pause_schedules_type_idx
 
 create index if not exists user_sessions_user_login_idx
   on public.user_sessions(user_id, login_at desc);
+
+create unique index if not exists user_sessions_token_unique
+  on public.user_sessions(session_token);
 
 create unique index if not exists profiles_email_lower_unique
   on public.profiles (lower(email));
@@ -1045,6 +1049,19 @@ grant execute on function public.list_late_pauses(timestamptz, int) to authentic
 grant execute on function public.mark_late_pauses_as_read(timestamptz) to authenticated;
 grant execute on function public.list_agent_logins() to authenticated;
 grant execute on function public.list_agent_login_history(uuid, int, int) to authenticated;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'user_sessions'
+  ) then
+    alter publication supabase_realtime add table public.user_sessions;
+  end if;
+end $$;
 
 insert into public.pause_types (code, label)
 values
