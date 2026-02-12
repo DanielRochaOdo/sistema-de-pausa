@@ -60,6 +60,16 @@ create table if not exists public.pause_notifications (
   unique (pause_id, manager_id)
 );
 
+create table if not exists public.user_sessions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  login_at timestamptz not null default now(),
+  logout_at timestamptz null,
+  device_type text not null check (device_type in ('mobile', 'desktop')),
+  user_agent text null,
+  created_at timestamptz default now()
+);
+
 create table if not exists public.pause_schedules (
   id uuid primary key default gen_random_uuid(),
   agent_id uuid not null references public.profiles(id) on delete cascade,
@@ -90,6 +100,9 @@ create index if not exists pause_schedules_agent_idx
 
 create index if not exists pause_schedules_type_idx
   on public.pause_schedules(pause_type_id);
+
+create index if not exists user_sessions_user_login_idx
+  on public.user_sessions(user_id, login_at desc);
 
 create unique index if not exists profiles_email_lower_unique
   on public.profiles (lower(email));
@@ -586,12 +599,92 @@ begin
 end;
 $$;
 
+create or replace function public.list_agent_logins()
+returns table (
+  agent_id uuid,
+  agent_name text,
+  login_at timestamptz,
+  logout_at timestamptz,
+  device_type text,
+  user_agent text,
+  last_logout_at timestamptz,
+  total_today_seconds int
+)
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  v_role text;
+  v_day_start timestamptz;
+  v_day_end timestamptz;
+begin
+  v_role := public.current_role();
+  if v_role not in ('ADMIN', 'GERENTE') then
+    raise exception 'not_allowed';
+  end if;
+
+  v_day_start := date_trunc('day', now());
+  v_day_end := v_day_start + interval '1 day';
+
+  return query
+  select
+    pr.id as agent_id,
+    pr.full_name as agent_name,
+    s.login_at,
+    s.logout_at,
+    s.device_type,
+    s.user_agent,
+    last_logout.last_logout_at,
+    coalesce(total_today.total_today_seconds, 0)::int as total_today_seconds
+  from public.profiles pr
+  left join lateral (
+    select us.login_at, us.logout_at, us.device_type, us.user_agent
+    from public.user_sessions us
+    where us.user_id = pr.id
+    order by us.login_at desc
+    limit 1
+  ) s on true
+  left join lateral (
+    select max(us.logout_at) as last_logout_at
+    from public.user_sessions us
+    where us.user_id = pr.id
+      and us.logout_at is not null
+  ) last_logout on true
+  left join lateral (
+    select sum(
+      greatest(
+        0,
+        extract(epoch from (least(coalesce(us.logout_at, now()), v_day_end) - greatest(us.login_at, v_day_start)))
+      )
+    ) as total_today_seconds
+    from public.user_sessions us
+    where us.user_id = pr.id
+      and coalesce(us.logout_at, now()) > v_day_start
+      and us.login_at < v_day_end
+  ) total_today on true
+  where pr.role = 'AGENTE'
+    and (
+      v_role = 'ADMIN'
+      or (
+        v_role = 'GERENTE'
+        and (
+          pr.manager_id = auth.uid()
+          or (pr.team_id is not null and pr.team_id = public.current_team_id())
+        )
+      )
+    )
+  order by pr.full_name;
+end;
+$$;
+
 alter table public.profiles enable row level security;
 alter table public.sectors enable row level security;
 alter table public.pause_types enable row level security;
 alter table public.pauses enable row level security;
 alter table public.pause_notifications enable row level security;
 alter table public.pause_schedules enable row level security;
+alter table public.user_sessions enable row level security;
 
 -- Profiles policies
 drop policy if exists "Profiles: select own or manager/admin" on public.profiles;
@@ -857,11 +950,45 @@ create policy "Pause notifications: manager update"
     )
   );
 
+-- User sessions policies
+drop policy if exists "User sessions: select own/admin/manager" on public.user_sessions;
+drop policy if exists "User sessions: insert own" on public.user_sessions;
+drop policy if exists "User sessions: update own/admin" on public.user_sessions;
+
+create policy "User sessions: select own/admin/manager"
+  on public.user_sessions for select
+  using (
+    public.is_admin(auth.uid())
+    or user_id = auth.uid()
+    or (
+      public.is_manager(auth.uid())
+      and exists (
+        select 1
+        from public.profiles pr
+        where pr.id = user_sessions.user_id
+          and (
+            pr.manager_id = auth.uid()
+            or (pr.team_id is not null and pr.team_id = public.current_team_id())
+          )
+      )
+    )
+  );
+
+create policy "User sessions: insert own"
+  on public.user_sessions for insert
+  with check (user_id = auth.uid());
+
+create policy "User sessions: update own/admin"
+  on public.user_sessions for update
+  using (user_id = auth.uid() or public.is_admin(auth.uid()))
+  with check (user_id = auth.uid() or public.is_admin(auth.uid()));
+
 grant execute on function public.start_pause(text) to authenticated;
 grant execute on function public.end_pause(text) to authenticated;
 grant execute on function public.list_dashboard(date, date, uuid, uuid, uuid) to authenticated;
 grant execute on function public.list_late_pauses(timestamptz, int) to authenticated;
 grant execute on function public.mark_late_pauses_as_read(timestamptz) to authenticated;
+grant execute on function public.list_agent_logins() to authenticated;
 
 insert into public.pause_types (code, label)
 values

@@ -3,6 +3,7 @@ import TopNav from '../components/TopNav'
 import StatCard from '../components/StatCard'
 import { listDashboard, getPauseTypes, listPauseSchedules, upsertPauseSchedule, deletePauseSchedule } from '../services/apiPauses'
 import { listAgents, listSectors } from '../services/apiAdmin'
+import { listAgentLogins } from '../services/apiSessions'
 import { formatDuration, formatInputDate, startOfMonth, startOfToday, startOfWeek } from '../utils/format'
 import { useAuth } from '../contexts/useAuth'
 
@@ -29,6 +30,7 @@ const normalizeTime = (value) => {
 export default function Manager() {
   const { profile } = useAuth()
   const isAdmin = profile?.role === 'ADMIN'
+  const [tab, setTab] = useState('dashboard')
   const [agents, setAgents] = useState([])
   const [pauseTypes, setPauseTypes] = useState([])
   const [sectors, setSectors] = useState([])
@@ -38,6 +40,11 @@ export default function Manager() {
   const [error, setError] = useState('')
   const [scheduleError, setScheduleError] = useState('')
   const [scheduleBusy, setScheduleBusy] = useState(false)
+  const [logins, setLogins] = useState([])
+  const [loginsError, setLoginsError] = useState('')
+  const [loginsLoading, setLoginsLoading] = useState(false)
+  const [loginsNow, setLoginsNow] = useState(Date.now())
+  const [loginsFetchedAt, setLoginsFetchedAt] = useState(Date.now())
 
   const [period, setPeriod] = useState('week')
   const [fromDate, setFromDate] = useState(formatInputDate(startOfWeek()))
@@ -59,6 +66,20 @@ export default function Manager() {
     setAgentId('')
     setPauseTypeId('')
     setSectorId('')
+  }
+
+  const loadLogins = async () => {
+    setLoginsLoading(true)
+    setLoginsError('')
+    try {
+      const data = await listAgentLogins()
+      setLogins(data || [])
+      setLoginsFetchedAt(Date.now())
+    } catch (err) {
+      setLoginsError(err.message || 'Falha ao carregar logins')
+    } finally {
+      setLoginsLoading(false)
+    }
   }
 
   const loadSchedules = async () => {
@@ -187,6 +208,17 @@ export default function Manager() {
     loadDashboard()
   }, [fromDate, toDate, agentId, pauseTypeId, sectorId])
 
+  useEffect(() => {
+    if (tab !== 'logins') return
+    loadLogins()
+  }, [tab])
+
+  useEffect(() => {
+    if (tab !== 'logins') return
+    const interval = setInterval(() => setLoginsNow(Date.now()), 30000)
+    return () => clearInterval(interval)
+  }, [tab])
+
   const summary = useMemo(() => {
     const map = new Map()
     const totals = { pauses: 0, duration: 0 }
@@ -224,6 +256,28 @@ export default function Manager() {
       .slice(0, 5)
   }, [summary.rows])
 
+  const formatSessionDuration = (loginAt, logoutAt) => {
+    if (!loginAt) return '-'
+    const end = logoutAt ? new Date(logoutAt).getTime() : loginsNow
+    const start = new Date(loginAt).getTime()
+    const seconds = Math.max(0, Math.floor((end - start) / 1000))
+    const minutes = Math.floor(seconds / 60)
+    const hours = String(Math.floor(minutes / 60)).padStart(2, '0')
+    const mins = String(minutes % 60).padStart(2, '0')
+    return `${hours}:${mins}`
+  }
+
+  const formatTotalToday = (totalSeconds, loginAt, logoutAt) => {
+    let seconds = Math.max(0, Number(totalSeconds || 0))
+    if (loginAt && !logoutAt && loginsFetchedAt) {
+      seconds += Math.max(0, Math.floor((loginsNow - loginsFetchedAt) / 1000))
+    }
+    const minutes = Math.floor(seconds / 60)
+    const hours = String(Math.floor(minutes / 60)).padStart(2, '0')
+    const mins = String(minutes % 60).padStart(2, '0')
+    return `${hours}:${mins}`
+  }
+
   const updateScheduleField = (id, field, value) => {
     setPauseSchedules((prev) =>
       prev.map((schedule) => (schedule.id === id ? { ...schedule, [field]: value } : schedule))
@@ -238,12 +292,97 @@ export default function Manager() {
           <div className="card border-red-200 bg-red-50 text-red-700">{error}</div>
         ) : null}
 
+        <div className="flex gap-2">
+          <button
+            className={`btn ${tab === 'dashboard' ? 'bg-brand-600 text-white' : 'btn-ghost'}`}
+            onClick={() => setTab('dashboard')}
+          >
+            Dashboard
+          </button>
+          <button
+            className={`btn ${tab === 'logins' ? 'bg-brand-600 text-white' : 'btn-ghost'}`}
+            onClick={() => setTab('logins')}
+          >
+            Login de agente
+          </button>
+        </div>
+
+        {tab === 'logins' ? (
+          <div className="card">
+            <div className="flex items-center justify-between">
+              <h2 className="font-display text-xl font-semibold text-slate-900">Login de agente</h2>
+              {loginsLoading ? <span className="text-sm text-slate-500">Carregando...</span> : null}
+            </div>
+            {loginsError ? (
+              <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {loginsError}
+              </div>
+            ) : null}
+            <div className="mt-4 overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="text-slate-500">
+                  <tr>
+                    <th className="text-left py-2">Agente</th>
+                    <th className="text-left py-2">Login</th>
+                    <th className="text-left py-2">Ultimo logout</th>
+                    <th className="text-left py-2">Sessao</th>
+                    <th className="text-left py-2">Tempo hoje</th>
+                    <th className="text-left py-2">Dispositivo</th>
+                  </tr>
+                </thead>
+                <tbody className="text-slate-900">
+                  {logins.map((item) => {
+                    const isActive = !!item.login_at && !item.logout_at
+                    return (
+                      <tr key={item.agent_id} className="border-t border-slate-100">
+                        <td className="py-2 font-medium">{item.agent_name}</td>
+                        <td className="py-2">
+                          {item.login_at ? new Date(item.login_at).toLocaleString('pt-BR') : '-'}
+                        </td>
+                        <td className="py-2">
+                          {item.last_logout_at ? new Date(item.last_logout_at).toLocaleString('pt-BR') : '-'}
+                        </td>
+                        <td className="py-2">
+                          <span className="font-medium">
+                            {formatSessionDuration(item.login_at, item.logout_at)}
+                          </span>
+                          {isActive ? <span className="ml-2 text-xs text-emerald-600">Atual</span> : null}
+                        </td>
+                        <td className="py-2">
+                          {formatTotalToday(item.total_today_seconds, item.login_at, item.logout_at)}
+                        </td>
+                        <td className="py-2">
+                          {item.device_type === 'mobile'
+                            ? 'Mobile'
+                            : item.device_type === 'desktop'
+                              ? 'Desktop'
+                              : '-'}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                  {!logins.length ? (
+                    <tr>
+                      <td className="py-3 text-slate-500" colSpan="6">
+                        Nenhum login registrado.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : null}
+
+        {tab !== 'dashboard' ? null : (
         <div className="grid gap-4 md:grid-cols-3">
           <StatCard label="Total de pausas" value={summary.totals.pauses} />
           <StatCard label="Tempo total" value={formatDuration(summary.totals.duration)} />
           <StatCard label="Agentes" value={summary.rows.length} />
         </div>
+        )}
 
+        {tab !== 'dashboard' ? null : (
         <div className="card">
           <div className="flex items-center justify-between">
             <h2 className="font-display text-xl font-semibold text-slate-900">Filtros</h2>
@@ -324,7 +463,9 @@ export default function Manager() {
             ) : null}
           </div>
         </div>
+        )}
 
+        {tab !== 'dashboard' ? null : (
         <div className="grid gap-6 lg:grid-cols-[2fr_3fr]">
           <div className="card">
             <h2 className="font-display text-xl font-semibold text-slate-900">Pausas programadas</h2>
@@ -474,7 +615,9 @@ export default function Manager() {
             </div>
           </div>
         </div>
+        )}
 
+        {tab !== 'dashboard' ? null : (
         <div className="grid gap-6 lg:grid-cols-[3fr_2fr]">
           <div className="card">
             <div className="flex items-center justify-between">
@@ -541,6 +684,7 @@ export default function Manager() {
             </div>
           </div>
         </div>
+        )}
       </div>
     </div>
   )
