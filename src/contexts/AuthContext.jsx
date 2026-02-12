@@ -63,6 +63,11 @@ const withTimeout = (promise, ms, label) => {
   })
 }
 
+const detectDeviceType = () => {
+  const isMobile = navigator.userAgentData?.mobile ?? /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)
+  return isMobile ? 'mobile' : 'desktop'
+}
+
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(null)
   const [profile, setProfile] = useState(null)
@@ -387,6 +392,20 @@ export function AuthProvider({ children }) {
       setSession(currentSession)
       const userId = currentSession?.user?.id || null
       if (userId) {
+        try {
+          await supabase
+            .from('user_sessions')
+            .update({ logout_at: new Date().toISOString() })
+            .eq('user_id', userId)
+            .is('logout_at', null)
+          await supabase.from('user_sessions').insert({
+            user_id: userId,
+            device_type: detectDeviceType(),
+            user_agent: navigator.userAgent
+          })
+        } catch (sessionErr) {
+          console.warn('[auth] failed to register session', sessionErr)
+        }
         await loadProfile(userId)
         lastProfileUserIdRef.current = userId
       }
@@ -405,6 +424,18 @@ export function AuthProvider({ children }) {
   }
 
   const signOut = async () => {
+    try {
+      const userId = sessionRef.current?.user?.id
+      if (userId) {
+        await supabase
+          .from('user_sessions')
+          .update({ logout_at: new Date().toISOString() })
+          .eq('user_id', userId)
+          .is('logout_at', null)
+      }
+    } catch (sessionErr) {
+      console.warn('[auth] failed to close session', sessionErr)
+    }
     await supabase.auth.signOut()
     setSession(null)
     setProfile(null)
