@@ -64,6 +64,7 @@ export default function Admin() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [busy, setBusy] = useState(false)
+  const [userSortDir, setUserSortDir] = useState('asc')
   const [newType, setNewType] = useState({ code: '', label: '', limit_time: '' })
   const [newSector, setNewSector] = useState({ code: '', label: '' })
   const [scheduleForm, setScheduleForm] = useState({
@@ -73,6 +74,8 @@ export default function Admin() {
     duration_time: ''
   })
   const [expandedAgentId, setExpandedAgentId] = useState('')
+  const [expandedSectorId, setExpandedSectorId] = useState('')
+  const [sectorEditManagerId, setSectorEditManagerId] = useState('')
 
   const refreshAll = async () => {
     setLoading(true)
@@ -400,6 +403,30 @@ export default function Admin() {
     return fallbackTeamId ? [fallbackTeamId] : []
   }
 
+  const sortedProfiles = useMemo(() => {
+    const list = [...profiles]
+    list.sort((a, b) => {
+      const nameA = a.full_name || ''
+      const nameB = b.full_name || ''
+      const cmp = nameA.localeCompare(nameB)
+      return userSortDir === 'asc' ? cmp : -cmp
+    })
+    return list
+  }, [profiles, userSortDir])
+
+  const agentsBySector = useMemo(() => {
+    const map = {}
+    agents.forEach((agent) => {
+      if (!agent.team_id) return
+      if (!map[agent.team_id]) map[agent.team_id] = []
+      map[agent.team_id].push(agent)
+    })
+    Object.values(map).forEach((list) => {
+      list.sort((a, b) => (a.full_name || '').localeCompare(b.full_name || ''))
+    })
+    return map
+  }, [agents])
+
   const schedulesByAgent = useMemo(() => {
     const map = new Map()
     pauseSchedules.forEach((schedule) => {
@@ -438,6 +465,61 @@ export default function Admin() {
       return a.full_name.localeCompare(b.full_name)
     })
   }, [agents, schedulesByAgent])
+
+  const ManagerSectorModal = ({ managerId, onClose }) => {
+    if (!managerId) return null
+    const manager = profiles.find((item) => item.id === managerId)
+    const selected = getManagerSectorIds(managerId, manager?.team_id)
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+        <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl">
+          <div className="flex items-center justify-between gap-4">
+            <h3 className="font-display text-lg font-semibold text-slate-900">
+              Editar setores - {manager?.full_name || 'Gerente'}
+            </h3>
+            <button type="button" className="btn-ghost" onClick={onClose}>
+              Fechar
+            </button>
+          </div>
+          <div className="mt-4">
+            <label className="label">Setores</label>
+            <select
+              className="input mt-1"
+              multiple
+              value={selected}
+              onChange={(e) => {
+                const next = Array.from(e.target.selectedOptions).map((opt) => opt.value)
+                setManagerSectorsMap((current) => ({ ...current, [managerId]: next }))
+              }}
+            >
+              {sectors.map((sector) => (
+                <option key={sector.id} value={sector.id}>
+                  {sector.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="mt-5 flex justify-end gap-2">
+            <button type="button" className="btn-ghost" onClick={onClose}>
+              Cancelar
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => {
+                if (selected.length) {
+                  updateProfileField(managerId, 'team_id', selected[0])
+                }
+                onClose()
+              }}
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen">
@@ -619,7 +701,18 @@ export default function Admin() {
                 <table className="min-w-full text-sm">
                   <thead className="text-slate-500">
                     <tr>
-                      <th className="text-left py-2">Nome</th>
+                      <th className="text-left py-2">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 text-left text-slate-500 hover:text-slate-700"
+                          onClick={() =>
+                            setUserSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'))
+                          }
+                        >
+                          Nome
+                          <span className="text-[10px]">{userSortDir === 'asc' ? '▲' : '▼'}</span>
+                        </button>
+                      </th>
                       <th className="text-left py-2">Role</th>
                       <th className="text-left py-2">Manager</th>
                       <th className="text-left py-2">Setor</th>
@@ -627,7 +720,7 @@ export default function Admin() {
                     </tr>
                   </thead>
                   <tbody className="text-slate-900">
-                    {profiles.map((profile) => (
+                    {sortedProfiles.map((profile) => (
                       <tr key={profile.id} className="border-t border-slate-100">
                         <td className="py-2">
                           <input
@@ -662,27 +755,60 @@ export default function Admin() {
                             ))}
                           </select>
                         </td>
-                      <td className="py-2">
+                        <td className="py-2">
                           {profile.role === 'GERENTE' ? (
-                            <select
-                              className="input"
-                              multiple
-                              value={getManagerSectorIds(profile.id, profile.team_id)}
-                              onChange={(e) => {
-                                const selected = Array.from(e.target.selectedOptions).map((opt) => opt.value)
-                                setManagerSectorsMap((current) => ({
-                                  ...current,
-                                  [profile.id]: selected
-                                }))
-                                updateProfileField(profile.id, 'team_id', selected[0] || '')
-                              }}
-                            >
-                              {sectors.map((sector) => (
-                                <option key={sector.id} value={sector.id}>
-                                  {sector.label}
-                                </option>
-                              ))}
-                            </select>
+                            <div className="flex items-center gap-2">
+                              <select
+                                className="input"
+                                value={
+                                  getManagerSectorIds(profile.id, profile.team_id).length > 1
+                                    ? '__MULTI__'
+                                    : getManagerSectorIds(profile.id, profile.team_id)[0] || ''
+                                }
+                                onChange={(e) => {
+                                  const managerSectorIds = getManagerSectorIds(profile.id, profile.team_id)
+                                  if (managerSectorIds.length > 1) {
+                                    return
+                                  }
+                                  updateProfileField(profile.id, 'team_id', e.target.value)
+                                }}
+                              >
+                                {getManagerSectorIds(profile.id, profile.team_id).length > 1 ? (
+                                  <option value="__MULTI__">Varios</option>
+                                ) : null}
+                                {getManagerSectorIds(profile.id, profile.team_id).map((sectorId) => (
+                                  <option key={sectorId} value={sectorId}>
+                                    {sectorById.get(sectorId) || 'Setor'}
+                                  </option>
+                                ))}
+                                {!getManagerSectorIds(profile.id, profile.team_id).length ? (
+                                  <option value="">Nenhum</option>
+                                ) : null}
+                              </select>
+                              <button
+                                type="button"
+                                className="btn-ghost h-9 w-9 p-0"
+                                title="Editar setores"
+                                aria-label="Editar setores"
+                                onClick={() => setSectorEditManagerId(profile.id)}
+                              >
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                  <path
+                                    d="M12 20h9"
+                                    stroke="currentColor"
+                                    strokeWidth="1.5"
+                                    strokeLinecap="round"
+                                  />
+                                  <path
+                                    d="M16.5 3.5a2.1 2.1 0 013 3L8 18l-4 1 1-4 11.5-11.5z"
+                                    stroke="currentColor"
+                                    strokeWidth="1.5"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                  />
+                                </svg>
+                              </button>
+                            </div>
                           ) : (
                             <select
                               className="input"
@@ -700,24 +826,65 @@ export default function Admin() {
                           )}
                         </td>
                         <td className="py-2">
-                          <button
-                            className="btn-ghost"
-                            type="button"
-                            onClick={() => handleUpdate(profile)}
-                            disabled={busy}
-                          >
-                            Salvar
-                          </button>
-                          {profile.role === 'AGENTE' ? (
+                          <div className="flex items-center gap-2">
                             <button
-                              className="btn-ghost text-red-600"
+                              className="btn-ghost h-9 w-9 p-0"
                               type="button"
-                              onClick={() => handleDeleteUser(profile)}
+                              onClick={() => handleUpdate(profile)}
                               disabled={busy}
+                              title="Salvar"
+                              aria-label="Salvar"
                             >
-                              Excluir
+                              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                <path
+                                  d="M5 7a2 2 0 012-2h8l4 4v8a2 2 0 01-2 2H7a2 2 0 01-2-2V7z"
+                                  stroke="currentColor"
+                                  strokeWidth="1.5"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                                <path
+                                  d="M9 5v5h6V5"
+                                  stroke="currentColor"
+                                  strokeWidth="1.5"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                              </svg>
                             </button>
-                          ) : null}
+                            {profile.role === 'AGENTE' ? (
+                              <button
+                                className="btn-ghost h-9 w-9 p-0 text-red-600"
+                                type="button"
+                                onClick={() => handleDeleteUser(profile)}
+                                disabled={busy}
+                                title="Excluir"
+                                aria-label="Excluir"
+                              >
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                  <path
+                                    d="M4 7h16"
+                                    stroke="currentColor"
+                                    strokeWidth="1.5"
+                                    strokeLinecap="round"
+                                  />
+                                  <path
+                                    d="M9 7V5h6v2"
+                                    stroke="currentColor"
+                                    strokeWidth="1.5"
+                                    strokeLinecap="round"
+                                  />
+                                  <path
+                                    d="M7 7l1 12h8l1-12"
+                                    stroke="currentColor"
+                                    strokeWidth="1.5"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                  />
+                                </svg>
+                              </button>
+                            ) : null}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -731,9 +898,58 @@ export default function Admin() {
                   </tbody>
                 </table>
               </div>
+
+              <div className="mt-6">
+                <h3 className="text-sm font-semibold text-slate-800">Setores</h3>
+                <div className="mt-3 space-y-2">
+                  {sectors.map((sector) => {
+                    const items = agentsBySector[sector.id] || []
+                    const isOpen = expandedSectorId === sector.id
+                    return (
+                      <div key={sector.id} className="rounded-xl border border-slate-200">
+                        <button
+                          type="button"
+                          className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
+                          onClick={() => setExpandedSectorId(isOpen ? '' : sector.id)}
+                        >
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900">{sector.label}</p>
+                            <p className="text-xs text-slate-500">{items.length} agentes</p>
+                          </div>
+                          <span className="text-xs text-slate-500">{isOpen ? 'Fechar' : 'Ver agentes'}</span>
+                        </button>
+                        {isOpen ? (
+                          <div className="border-t border-slate-100 px-3 pb-3 pt-2">
+                            {items.length ? (
+                              <div className="space-y-2">
+                                {items.map((agent) => (
+                                  <div
+                                    key={agent.id}
+                                    className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2"
+                                  >
+                                    <span className="text-sm text-slate-900">{agent.full_name}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-sm text-slate-500">Nenhum agente neste setor.</p>
+                            )}
+                          </div>
+                        ) : null}
+                      </div>
+                    )
+                  })}
+                  {!sectors.length ? <p className="text-sm text-slate-500">Nenhum setor cadastrado.</p> : null}
+                </div>
+              </div>
             </div>
           </div>
         ) : null}
+
+        <ManagerSectorModal
+          managerId={sectorEditManagerId}
+          onClose={() => setSectorEditManagerId('')}
+        />
 
         {tab === 'pauseTypes' ? (
           <div className="grid gap-6 lg:grid-cols-[2fr_3fr]">
