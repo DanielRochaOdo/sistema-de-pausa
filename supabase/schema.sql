@@ -93,9 +93,6 @@ create index if not exists pauses_type_idx
 create index if not exists pause_types_code_idx
   on public.pause_types(code);
 
-create unique index if not exists pause_schedules_agent_type_unique
-  on public.pause_schedules(agent_id, pause_type_id);
-
 create index if not exists pause_schedules_agent_idx
   on public.pause_schedules(agent_id);
 

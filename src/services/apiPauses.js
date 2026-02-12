@@ -117,9 +117,30 @@ export async function listActivePauses() {
 }
 
 export async function upsertPauseSchedule(payload) {
+  if (payload?.id) {
+    const { data, error } = await supabase
+      .from('pause_schedules')
+      .update({
+        agent_id: payload.agent_id,
+        pause_type_id: payload.pause_type_id,
+        scheduled_time: payload.scheduled_time,
+        duration_minutes: payload.duration_minutes ?? null
+      })
+      .eq('id', payload.id)
+      .select()
+      .single()
+    if (error) throw error
+    return data
+  }
+
   const { data, error } = await supabase
     .from('pause_schedules')
-    .upsert(payload, { onConflict: 'agent_id,pause_type_id' })
+    .insert({
+      agent_id: payload.agent_id,
+      pause_type_id: payload.pause_type_id,
+      scheduled_time: payload.scheduled_time,
+      duration_minutes: payload.duration_minutes ?? null
+    })
     .select()
     .single()
   if (error) throw error

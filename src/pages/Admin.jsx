@@ -303,6 +303,7 @@ export default function Admin() {
     setBusy(true)
     try {
       await upsertPauseSchedule({
+        id: schedule.id,
         agent_id: schedule.agent_id,
         pause_type_id: schedule.pause_type_id,
         scheduled_time: schedule.scheduled_time,
