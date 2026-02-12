@@ -59,22 +59,64 @@ export async function listDashboard(filters) {
 }
 
 export async function getLatePausesSummary({ fromDate, limit = 5 } = {}) {
-  let query = supabase
-    .from('pauses')
-    .select(
-      'id, ended_at, duration_seconds, atraso, pause_types(label,limit_minutes), profiles!pauses_agent_id_fkey(full_name)',
-      { count: 'exact' }
-    )
-    .eq('atraso', true)
-    .not('ended_at', 'is', null)
-    .order('ended_at', { ascending: false })
-    .limit(limit)
-
-  if (fromDate) {
-    query = query.gte('ended_at', fromDate.toISOString())
+  const payload = {
+    p_from: fromDate ? fromDate.toISOString() : null,
+    p_limit: limit
   }
-
-  const { data, error, count } = await query
+  const { data, error } = await supabase.rpc('list_late_pauses', payload)
   if (error) throw error
-  return { items: data || [], count: count || 0 }
+  const items = data || []
+  const count = items.length ? items[0].total_unread : 0
+  return { items, count }
+}
+
+export async function markLatePauseAsRead(pauseId, managerId) {
+  if (!pauseId || !managerId) throw new Error('Missing pauseId or managerId')
+  const { data, error } = await supabase.from('pause_notifications').upsert(
+    {
+      pause_id: pauseId,
+      manager_id: managerId,
+      read_at: new Date().toISOString()
+    },
+    { onConflict: 'pause_id,manager_id' }
+  )
+  if (error) throw error
+  return data
+}
+
+export async function markAllLatePausesAsRead({ fromDate } = {}) {
+  const payload = {
+    p_from: fromDate ? fromDate.toISOString() : null
+  }
+  const { data, error } = await supabase.rpc('mark_late_pauses_as_read', payload)
+  if (error) throw error
+  return data
+}
+
+export async function listPauseSchedules(agentId) {
+  let query = supabase
+    .from('pause_schedules')
+    .select('id, agent_id, pause_type_id, scheduled_time, duration_minutes, profiles(full_name), pause_types(label)')
+    .order('scheduled_time', { ascending: true })
+  if (agentId) {
+    query = query.eq('agent_id', agentId)
+  }
+  const { data, error } = await query
+  if (error) throw error
+  return data
+}
+
+export async function upsertPauseSchedule(payload) {
+  const { data, error } = await supabase
+    .from('pause_schedules')
+    .upsert(payload, { onConflict: 'agent_id,pause_type_id' })
+    .select()
+    .single()
+  if (error) throw error
+  return data
+}
+
+export async function deletePauseSchedule(id) {
+  const { error } = await supabase.from('pause_schedules').delete().eq('id', id)
+  if (error) throw error
 }

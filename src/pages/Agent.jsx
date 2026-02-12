@@ -2,9 +2,14 @@ import { useEffect, useMemo, useState } from 'react'
 import TopNav from '../components/TopNav'
 import StatCard from '../components/StatCard'
 import { useAuth } from '../contexts/useAuth'
-import { endPause, getActivePause, getPauseTypes, listRecentPauses, startPause } from '../services/apiPauses'
+import { endPause, getActivePause, getPauseTypes, listRecentPauses, listPauseSchedules, startPause } from '../services/apiPauses'
 import { formatDateTime, formatDuration } from '../utils/format'
 import { friendlyError } from '../utils/errors'
+
+const normalizeTime = (value) => {
+  if (!value) return '-'
+  return value.slice(0, 5)
+}
 
 export default function Agent() {
   const { profile } = useAuth()
@@ -12,8 +17,10 @@ export default function Agent() {
   const [selectedCode, setSelectedCode] = useState('')
   const [activePause, setActivePause] = useState(null)
   const [recentPauses, setRecentPauses] = useState([])
+  const [pauseSchedules, setPauseSchedules] = useState([])
   const [notes, setNotes] = useState('')
   const [error, setError] = useState('')
+  const [scheduleError, setScheduleError] = useState('')
   const [loading, setLoading] = useState(true)
   const [starting, setStarting] = useState(false)
   const [ending, setEnding] = useState(false)
@@ -24,17 +31,24 @@ export default function Agent() {
     setLoading(true)
     setError('')
     try {
-      const [types, active, recent] = await Promise.all([
+      const [types, active, recent, schedules] = await Promise.all([
         getPauseTypes(true),
         getActivePause(profile.id),
-        listRecentPauses(profile.id, 7)
+        listRecentPauses(profile.id, 7),
+        listPauseSchedules(profile.id)
       ])
       setPauseTypes(types)
       setActivePause(active)
       setSelectedCode(types?.[0]?.code || '')
       setRecentPauses(recent)
+      setPauseSchedules(schedules || [])
+      setScheduleError('')
     } catch (err) {
-      setError(friendlyError(err, 'Falha ao carregar dados'))
+      if (err?.message?.includes('pause_schedules')) {
+        setScheduleError(friendlyError(err, 'Falha ao carregar horarios'))
+      } else {
+        setError(friendlyError(err, 'Falha ao carregar dados'))
+      }
     } finally {
       setLoading(false)
     }
@@ -90,7 +104,51 @@ export default function Agent() {
 
   return (
     <div className="min-h-screen">
-      <TopNav />
+      <TopNav
+        agentControls={
+          <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Controle de pausa</p>
+              <p className="text-xs text-slate-600">{activePause ? activeLabel : 'Pronto para iniciar'}</p>
+            </div>
+            {!activePause ? (
+              <div className="flex items-center gap-2">
+                <select
+                  className="input h-10"
+                  value={selectedCode}
+                  onChange={(event) => setSelectedCode(event.target.value)}
+                  disabled={loading}
+                >
+                  {pauseTypes.map((type) => (
+                    <option key={type.id} value={type.code}>
+                      {type.label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="btn-primary h-10 whitespace-nowrap"
+                  onClick={handleStart}
+                  disabled={starting || loading}
+                >
+                  {starting ? 'Iniciando...' : 'Iniciar pausa'}
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <input
+                  className="input h-10 min-w-[200px]"
+                  value={notes}
+                  onChange={(event) => setNotes(event.target.value)}
+                  placeholder="Notas (opcional)"
+                />
+                <button className="btn-secondary h-10 whitespace-nowrap" onClick={handleEnd} disabled={ending}>
+                  {ending ? 'Encerrando...' : 'Encerrar pausa'}
+                </button>
+              </div>
+            )}
+          </div>
+        }
+      />
       <div className="px-6 pb-10 space-y-6">
         {error ? (
           <div className="card border-red-200 bg-red-50 text-red-700">{error}</div>
@@ -104,56 +162,42 @@ export default function Agent() {
 
         <div className="grid gap-6 lg:grid-cols-[2fr_3fr]">
           <div className="card">
-            <h2 className="font-display text-xl font-semibold text-slate-900">Controle de pausa</h2>
-            <p className="text-sm text-slate-600 mt-1">
-              Inicie e encerre sua pausa com um clique. O contador continua mesmo se a tela for recarregada.
-            </p>
+            <h2 className="font-display text-xl font-semibold text-slate-900">Horarios de pausa</h2>
+            <p className="text-sm text-slate-600 mt-1">Agenda definida pelo gerente.</p>
+
+            {scheduleError ? (
+              <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {scheduleError}
+              </div>
+            ) : null}
 
             {loading ? (
               <p className="text-sm text-slate-500 mt-4">Carregando...</p>
             ) : (
-              <div className="mt-4 space-y-4">
-                <div>
-                  <label className="label">Tipo de pausa</label>
-                  <select
-                    className="input mt-1"
-                    value={selectedCode}
-                    onChange={(event) => setSelectedCode(event.target.value)}
-                    disabled={!!activePause}
-                  >
-                    {pauseTypes.map((type) => (
-                      <option key={type.id} value={type.code}>
-                        {type.label}
-                      </option>
+              <div className="mt-4 overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead className="text-slate-500">
+                    <tr>
+                      <th className="text-left py-2">Tipo</th>
+                      <th className="text-left py-2">Horario</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-slate-900">
+                    {pauseSchedules.map((schedule) => (
+                      <tr key={schedule.id} className="border-t border-slate-100">
+                        <td className="py-2">{schedule.pause_types?.label}</td>
+                        <td className="py-2">{normalizeTime(schedule.scheduled_time)}</td>
+                      </tr>
                     ))}
-                  </select>
-                </div>
-
-                {activePause ? (
-                  <div className="space-y-3">
-                    <div className="rounded-xl border border-brand-100 bg-brand-50 px-4 py-3">
-                      <p className="text-xs uppercase tracking-[0.2em] text-brand-700">Pausa ativa</p>
-                      <p className="mt-1 font-semibold text-brand-900">{activeLabel}</p>
-                      <p className="text-sm text-brand-800">Inicio: {formatDateTime(activePause.started_at)}</p>
-                    </div>
-                    <div>
-                      <label className="label">Notas</label>
-                      <textarea
-                        className="input mt-1 min-h-[96px]"
-                        value={notes}
-                        onChange={(event) => setNotes(event.target.value)}
-                        placeholder="Opcional: registre algum detalhe sobre a pausa."
-                      />
-                    </div>
-                    <button className="btn-secondary w-full" onClick={handleEnd} disabled={ending}>
-                      {ending ? 'Encerrando...' : 'Encerrar pausa'}
-                    </button>
-                  </div>
-                ) : (
-                  <button className="btn-primary w-full" onClick={handleStart} disabled={starting}>
-                    {starting ? 'Iniciando...' : 'Iniciar pausa'}
-                  </button>
-                )}
+                    {!pauseSchedules.length ? (
+                      <tr>
+                        <td className="py-3 text-slate-500" colSpan="2">
+                          Nenhuma pausa programada.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>

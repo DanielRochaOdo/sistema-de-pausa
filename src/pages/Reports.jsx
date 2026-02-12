@@ -20,6 +20,15 @@ export default function Reports() {
   const [error, setError] = useState('')
   const [exportOpen, setExportOpen] = useState(false)
 
+  const resetFilters = () => {
+    setFromDate(formatInputDate(startOfMonth()))
+    setToDate(formatInputDate(new Date()))
+    setAgentId('')
+    setPauseTypeId('')
+    setSectorId('')
+    setExportOpen(false)
+  }
+
   useEffect(() => {
     const init = async () => {
       try {
@@ -100,7 +109,12 @@ export default function Reports() {
         ) : null}
 
         <div className="card">
-          <h2 className="font-display text-xl font-semibold text-slate-900">Relatorios</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="font-display text-xl font-semibold text-slate-900">Relatorios</h2>
+            <button type="button" className="btn-ghost" onClick={resetFilters}>
+              Limpar filtros
+            </button>
+          </div>
           <p className="text-sm text-slate-600 mt-1">Exporte por periodo, agente, tipo e setor.</p>
           <div className="mt-4 grid gap-4 md:grid-cols-6">
             <div>

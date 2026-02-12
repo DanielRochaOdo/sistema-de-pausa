@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import TopNav from '../components/TopNav'
 import {
   createPauseType,
@@ -12,6 +12,7 @@ import {
   updateProfile,
   updateSector
 } from '../services/apiAdmin'
+import { listPauseSchedules, upsertPauseSchedule, deletePauseSchedule } from '../services/apiPauses'
 
 const emptyUserForm = {
   email: '',
@@ -37,12 +38,18 @@ const timeToMinutes = (value) => {
   return h * 60 + m
 }
 
+const normalizeTime = (value) => {
+  if (!value) return ''
+  return value.slice(0, 5)
+}
+
 export default function Admin() {
   const [tab, setTab] = useState('users')
   const [profiles, setProfiles] = useState([])
   const [managers, setManagers] = useState([])
   const [pauseTypes, setPauseTypes] = useState([])
   const [sectors, setSectors] = useState([])
+  const [pauseSchedules, setPauseSchedules] = useState([])
   const [userForm, setUserForm] = useState(emptyUserForm)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -50,21 +57,29 @@ export default function Admin() {
   const [busy, setBusy] = useState(false)
   const [newType, setNewType] = useState({ code: '', label: '', limit_time: '' })
   const [newSector, setNewSector] = useState({ code: '', label: '' })
+  const [scheduleForm, setScheduleForm] = useState({
+    agent_id: '',
+    pause_type_id: '',
+    scheduled_time: '',
+    duration_time: ''
+  })
 
   const refreshAll = async () => {
     setLoading(true)
     setError('')
     try {
-      const [profilesData, typesData, managersData, sectorsData] = await Promise.all([
+      const [profilesData, typesData, managersData, sectorsData, schedulesData] = await Promise.all([
         listProfiles(),
         listPauseTypes(),
         listManagers(),
-        listSectors()
+        listSectors(),
+        listPauseSchedules()
       ])
       setProfiles(profilesData)
       setPauseTypes(typesData)
       setManagers(managersData)
       setSectors(sectorsData)
+      setPauseSchedules(schedulesData)
     } catch (err) {
       setError(err.message || 'Falha ao carregar dados')
     } finally {
@@ -186,6 +201,71 @@ export default function Admin() {
     }
   }
 
+  const handleScheduleCreate = async () => {
+    if (!scheduleForm.agent_id || !scheduleForm.pause_type_id || !scheduleForm.scheduled_time) {
+      setError('Preencha agente, tipo e horario da pausa.')
+      return
+    }
+    setError('')
+    setSuccess('')
+    setBusy(true)
+    try {
+      await upsertPauseSchedule({
+        agent_id: scheduleForm.agent_id,
+        pause_type_id: scheduleForm.pause_type_id,
+        scheduled_time: scheduleForm.scheduled_time,
+        duration_minutes: timeToMinutes(scheduleForm.duration_time)
+      })
+      setScheduleForm({ agent_id: '', pause_type_id: '', scheduled_time: '', duration_time: '' })
+      setSuccess('Pausa programada salva.')
+      await refreshAll()
+    } catch (err) {
+      setError(err.message || 'Falha ao salvar pausa programada')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleScheduleUpdate = async (schedule) => {
+    if (!schedule?.agent_id || !schedule?.pause_type_id || !schedule?.scheduled_time) {
+      setError('Preencha agente, tipo e horario da pausa.')
+      return
+    }
+    setError('')
+    setSuccess('')
+    setBusy(true)
+    try {
+      await upsertPauseSchedule({
+        agent_id: schedule.agent_id,
+        pause_type_id: schedule.pause_type_id,
+        scheduled_time: schedule.scheduled_time,
+        duration_minutes: schedule.duration_minutes ?? null
+      })
+      setSuccess('Pausa programada atualizada.')
+      await refreshAll()
+    } catch (err) {
+      setError(err.message || 'Falha ao atualizar pausa programada')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleScheduleDelete = async (schedule) => {
+    if (!schedule?.id) return
+    setError('')
+    setSuccess('')
+    setBusy(true)
+    try {
+      await deletePauseSchedule(schedule.id)
+      setSuccess('Pausa programada removida.')
+      await refreshAll()
+    } catch (err) {
+      setError(err.message || 'Falha ao remover pausa programada')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const updateProfileField = (id, field, value) => {
     setProfiles((prev) =>
       prev.map((profile) => {
@@ -212,6 +292,14 @@ export default function Admin() {
   const updateSectorField = (id, field, value) => {
     setSectors((prev) => prev.map((sector) => (sector.id === id ? { ...sector, [field]: value } : sector)))
   }
+
+  const updateScheduleField = (id, field, value) => {
+    setPauseSchedules((prev) =>
+      prev.map((schedule) => (schedule.id === id ? { ...schedule, [field]: value } : schedule))
+    )
+  }
+
+  const agents = useMemo(() => profiles.filter((profile) => profile.role === 'AGENTE'), [profiles])
 
   return (
     <div className="min-h-screen">
@@ -242,6 +330,12 @@ export default function Admin() {
             onClick={() => setTab('sectors')}
           >
             Setores
+          </button>
+          <button
+            className={`btn ${tab === 'pauseSchedules' ? 'bg-brand-600 text-white' : 'btn-ghost'}`}
+            onClick={() => setTab('pauseSchedules')}
+          >
+            Pausas programadas
           </button>
         </div>
 
@@ -622,6 +716,150 @@ export default function Admin() {
                       <tr>
                         <td className="py-3 text-slate-500" colSpan="4">
                           Nenhum setor cadastrado.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {tab === 'pauseSchedules' ? (
+          <div className="grid gap-6 lg:grid-cols-[2fr_3fr]">
+            <div className="card">
+              <h2 className="font-display text-xl font-semibold text-slate-900">Programar pausa</h2>
+              <p className="text-sm text-slate-600 mt-1">
+                Se o tempo nao for definido, usa o limite configurado no tipo de pausa.
+              </p>
+              <div className="mt-4 space-y-3">
+                <div>
+                  <label className="label">Agente</label>
+                  <select
+                    className="input mt-1"
+                    value={scheduleForm.agent_id}
+                    onChange={(e) => setScheduleForm((prev) => ({ ...prev, agent_id: e.target.value }))}
+                  >
+                    <option value="">Selecione</option>
+                    {agents.map((agent) => (
+                      <option key={agent.id} value={agent.id}>
+                        {agent.full_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="label">Tipo de pausa</label>
+                  <select
+                    className="input mt-1"
+                    value={scheduleForm.pause_type_id}
+                    onChange={(e) => setScheduleForm((prev) => ({ ...prev, pause_type_id: e.target.value }))}
+                  >
+                    <option value="">Selecione</option>
+                    {pauseTypes.map((type) => (
+                      <option key={type.id} value={type.id}>
+                        {type.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="label">Horario da pausa</label>
+                  <input
+                    className="input mt-1"
+                    type="time"
+                    step="60"
+                    value={scheduleForm.scheduled_time}
+                    onChange={(e) => setScheduleForm((prev) => ({ ...prev, scheduled_time: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="label">Duracao (hh:mm)</label>
+                  <input
+                    className="input mt-1"
+                    type="time"
+                    step="60"
+                    value={scheduleForm.duration_time}
+                    onChange={(e) => setScheduleForm((prev) => ({ ...prev, duration_time: e.target.value }))}
+                  />
+                </div>
+                <button className="btn-primary w-full" type="button" onClick={handleScheduleCreate} disabled={busy}>
+                  {busy ? 'Salvando...' : 'Salvar pausa'}
+                </button>
+              </div>
+            </div>
+
+            <div className="card">
+              <h2 className="font-display text-xl font-semibold text-slate-900">Pausas programadas</h2>
+              <div className="mt-4 overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead className="text-slate-500">
+                    <tr>
+                      <th className="text-left py-2">Agente</th>
+                      <th className="text-left py-2">Tipo</th>
+                      <th className="text-left py-2">Horario</th>
+                      <th className="text-left py-2">Duracao</th>
+                      <th className="text-left py-2">Acoes</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-slate-900">
+                    {pauseSchedules.map((schedule) => (
+                      <tr key={schedule.id} className="border-t border-slate-100">
+                        <td className="py-2">{schedule.profiles?.full_name || '-'}</td>
+                        <td className="py-2">{schedule.pause_types?.label || '-'}</td>
+                        <td className="py-2">
+                          <input
+                            className="input"
+                            type="time"
+                            step="60"
+                            value={normalizeTime(schedule.scheduled_time)}
+                            onChange={(e) =>
+                              updateScheduleField(schedule.id, 'scheduled_time', e.target.value)
+                            }
+                          />
+                        </td>
+                        <td className="py-2">
+                          <input
+                            className="input"
+                            type="time"
+                            step="60"
+                            value={minutesToTime(schedule.duration_minutes)}
+                            onChange={(e) =>
+                              updateScheduleField(
+                                schedule.id,
+                                'duration_minutes',
+                                timeToMinutes(e.target.value)
+                              )
+                            }
+                          />
+                        </td>
+                        <td className="py-2">
+                          <div className="flex gap-2">
+                            <button
+                              className="btn-ghost"
+                              type="button"
+                              onClick={() => handleScheduleUpdate(schedule)}
+                              disabled={busy}
+                            >
+                              Salvar
+                            </button>
+                            <button
+                              className="btn-ghost text-red-600"
+                              type="button"
+                              onClick={() => handleScheduleDelete(schedule)}
+                              disabled={busy}
+                            >
+                              Remover
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {!pauseSchedules.length ? (
+                      <tr>
+                        <td className="py-3 text-slate-500" colSpan="5">
+                          Nenhuma pausa programada.
                         </td>
                       </tr>
                     ) : null}
