@@ -87,11 +87,12 @@ export default function ProtectedRoute({ allowedRoles, children }) {
     return <AuthError message={error} onRetry={retry} onSignOut={signOut} />
   }
 
-  if (slowSession || slowProfile) {
-    return <SlowConnection onRetry={retry} />
+  if (loading || profileLoading) {
+    if (slowSession || slowProfile) {
+      return <SlowConnection onRetry={retry} />
+    }
+    return <Loading />
   }
-
-  if (loading || profileLoading) return <Loading />
   if (!session) return <Navigate to="/login" replace />
 
   if (profileFetched && !profile) {
