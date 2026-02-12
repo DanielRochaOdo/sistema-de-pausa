@@ -3,8 +3,11 @@ import { supabase } from '../services/supabaseClient'
 import AuthContext from './authContextStore'
 
 const PROFILE_CACHE_KEY = 'pause-control.profile'
+const AUTH_STORAGE_KEY = 'pause-control.auth'
 const SLOW_SESSION_MS = 6000
 const SLOW_PROFILE_MS = 6000
+const SESSION_TIMEOUT_MS = 8000
+const PROFILE_TIMEOUT_MS = 8000
 
 const readCachedProfile = (userId) => {
   try {
@@ -29,6 +32,28 @@ const writeCachedProfile = (profile) => {
   } catch (err) {
     console.error('[auth] failed to write profile cache', err)
   }
+}
+
+const clearAuthStorage = () => {
+  try {
+    localStorage.removeItem(AUTH_STORAGE_KEY)
+  } catch (err) {
+    console.error('[auth] failed to clear auth storage', err)
+  }
+}
+
+const withTimeout = (promise, ms, label) => {
+  let timeoutId
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const err = new Error(`${label}_TIMEOUT`)
+      err.code = 'TIMEOUT'
+      reject(err)
+    }, ms)
+  })
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId)
+  })
 }
 
 export function AuthProvider({ children }) {
@@ -113,11 +138,15 @@ export function AuthProvider({ children }) {
 
     try {
       console.info('[auth] loadProfile start userId=', userId)
-      const { data, error: profileError } = await supabase
-        .from('profiles')
-        .select('id, full_name, role, team_id, manager_id')
-        .eq('id', userId)
-        .maybeSingle()
+      const { data, error: profileError } = await withTimeout(
+        supabase
+          .from('profiles')
+          .select('id, full_name, role, team_id, manager_id')
+          .eq('id', userId)
+          .maybeSingle(),
+        PROFILE_TIMEOUT_MS,
+        'PROFILE'
+      )
 
       if (requestId !== profileRequestIdRef.current) {
         return null
@@ -144,8 +173,13 @@ export function AuthProvider({ children }) {
       return data
     } catch (err) {
       if (requestId !== profileRequestIdRef.current) return null
-      console.error('[auth] loadProfile exception', err)
-      setError(String(err?.message || err))
+      const message = String(err?.message || err)
+      if (message.includes('_TIMEOUT')) {
+        console.warn('[auth] loadProfile timeout, keeping cached profile')
+      } else {
+        console.error('[auth] loadProfile exception', err)
+        setError(message)
+      }
       return null
     } finally {
       if (requestId === profileRequestIdRef.current) {
@@ -168,7 +202,11 @@ export function AuthProvider({ children }) {
 
     try {
       console.info('[auth] init start')
-      const { data, error: sessionError } = await supabase.auth.getSession()
+      const { data, error: sessionError } = await withTimeout(
+        supabase.auth.getSession(),
+        SESSION_TIMEOUT_MS,
+        'SESSION'
+      )
       if (sessionError) {
         console.error('[auth] getSession error', sessionError)
         setError(JSON.stringify(sessionError))
@@ -191,11 +229,17 @@ export function AuthProvider({ children }) {
       }
       console.info('[auth] session loaded')
     } catch (err) {
-      console.error('[auth] init exception', err)
+      const message = String(err?.message || err)
+      if (message.includes('_TIMEOUT')) {
+        console.warn('[auth] getSession timeout, clearing auth storage')
+        clearAuthStorage()
+      } else {
+        console.error('[auth] init exception', err)
+        setError(message)
+      }
       setSession(null)
       setProfile(null)
       writeCachedProfile(null)
-      setError(String(err?.message || err))
     } finally {
       setLoading(false)
       setSlowSession(false)
