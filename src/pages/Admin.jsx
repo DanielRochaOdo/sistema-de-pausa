@@ -30,6 +30,19 @@ const emptyUserForm = {
   sector_ids: []
 }
 
+const emptyManagerForm = {
+  email: '',
+  password: '',
+  full_name: '',
+  sector_ids: []
+}
+
+const emptyAdminForm = {
+  email: '',
+  password: '',
+  full_name: ''
+}
+
 const minutesToTime = (minutes) => {
   if (minutes === null || minutes === undefined || Number.isNaN(minutes)) return ''
   const safeMinutes = Math.max(0, Number(minutes))
@@ -60,6 +73,8 @@ export default function Admin() {
   const [pauseSchedules, setPauseSchedules] = useState([])
   const [managerSectorsMap, setManagerSectorsMap] = useState({})
   const [userForm, setUserForm] = useState(emptyUserForm)
+  const [managerForm, setManagerForm] = useState(emptyManagerForm)
+  const [adminForm, setAdminForm] = useState(emptyAdminForm)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -76,6 +91,53 @@ export default function Admin() {
   const [expandedAgentId, setExpandedAgentId] = useState('')
   const [expandedSectorId, setExpandedSectorId] = useState('')
   const [sectorEditManagerId, setSectorEditManagerId] = useState('')
+  const [usersView, setUsersView] = useState('sectors')
+  const [pauseModalOpen, setPauseModalOpen] = useState(false)
+  const [pauseModalAgentId, setPauseModalAgentId] = useState('')
+  const [pauseModalAgentName, setPauseModalAgentName] = useState('')
+  const [pauseModalForm, setPauseModalForm] = useState({
+    pause_type_id: '',
+    scheduled_time: '',
+    duration_time: ''
+  })
+  const [pauseModalItems, setPauseModalItems] = useState([])
+  const [agentEditModalOpen, setAgentEditModalOpen] = useState(false)
+  const [agentEditId, setAgentEditId] = useState('')
+  const [agentEditForm, setAgentEditForm] = useState({
+    full_name: '',
+    manager_id: '',
+    team_id: ''
+  })
+  const [agentEditScheduleForm, setAgentEditScheduleForm] = useState({
+    pause_type_id: '',
+    scheduled_time: '',
+    duration_time: ''
+  })
+  const [managerEditModalOpen, setManagerEditModalOpen] = useState(false)
+  const [managerEditId, setManagerEditId] = useState('')
+  const [managerEditForm, setManagerEditForm] = useState({
+    full_name: '',
+    email: ''
+  })
+  const [adminEditModalOpen, setAdminEditModalOpen] = useState(false)
+  const [adminEditId, setAdminEditId] = useState('')
+  const [adminEditForm, setAdminEditForm] = useState({
+    full_name: '',
+    email: ''
+  })
+
+  const normalizeEmail = (value) => String(value || '').trim().toLowerCase()
+  const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(value))
+  const isDuplicateEmail = (value, ignoreId = null) => {
+    const normalized = normalizeEmail(value)
+    if (!normalized) return false
+    return profiles.some(
+      (profile) =>
+        profile.id !== ignoreId &&
+        profile.email &&
+        normalizeEmail(profile.email) === normalized
+    )
+  }
 
   const refreshAll = async () => {
     setLoading(true)
@@ -117,12 +179,91 @@ export default function Admin() {
     setSuccess('')
     setBusy(true)
     try {
-      await createUserWithEdgeFunction(userForm)
+      if (!isValidEmail(userForm.email)) {
+        throw new Error('Email invalido.')
+      }
+      if (isDuplicateEmail(userForm.email)) {
+        throw new Error('Email ja cadastrado.')
+      }
+      const created = await createUserWithEdgeFunction(userForm)
       setSuccess('Usuario criado com sucesso.')
+      if (userForm.role === 'AGENTE' && created?.id) {
+        setPauseModalAgentId(created.id)
+        setPauseModalAgentName(userForm.full_name)
+        setPauseModalForm({
+          pause_type_id: pauseTypes?.[0]?.id || '',
+          scheduled_time: '',
+          duration_time: ''
+        })
+        setPauseModalItems([])
+        setPauseModalOpen(true)
+      }
       setUserForm(emptyUserForm)
       await refreshAll()
     } catch (err) {
       setError(err.message || 'Falha ao criar usuario')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleCreateManager = async (event) => {
+    event.preventDefault()
+    setError('')
+    setSuccess('')
+    setBusy(true)
+    try {
+      if (!isValidEmail(managerForm.email)) {
+        throw new Error('Email invalido.')
+      }
+      if (isDuplicateEmail(managerForm.email)) {
+        throw new Error('Email ja cadastrado.')
+      }
+      const sectorIds = managerForm.sector_ids || []
+      if (!sectorIds.length) {
+        throw new Error('Selecione ao menos um setor.')
+      }
+      await createUserWithEdgeFunction({
+        email: managerForm.email,
+        password: managerForm.password,
+        full_name: managerForm.full_name,
+        role: 'GERENTE',
+        team_id: sectorIds[0],
+        sector_ids: sectorIds
+      })
+      setSuccess('Gerente criado com sucesso.')
+      setManagerForm(emptyManagerForm)
+      await refreshAll()
+    } catch (err) {
+      setError(err.message || 'Falha ao criar gerente')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleCreateAdmin = async (event) => {
+    event.preventDefault()
+    setError('')
+    setSuccess('')
+    setBusy(true)
+    try {
+      if (!isValidEmail(adminForm.email)) {
+        throw new Error('Email invalido.')
+      }
+      if (isDuplicateEmail(adminForm.email)) {
+        throw new Error('Email ja cadastrado.')
+      }
+      await createUserWithEdgeFunction({
+        email: adminForm.email,
+        password: adminForm.password,
+        full_name: adminForm.full_name,
+        role: 'ADMIN'
+      })
+      setSuccess('Admin criado com sucesso.')
+      setAdminForm(emptyAdminForm)
+      await refreshAll()
+    } catch (err) {
+      setError(err.message || 'Falha ao criar admin')
     } finally {
       setBusy(false)
     }
@@ -404,7 +545,7 @@ export default function Admin() {
   }
 
   const sortedProfiles = useMemo(() => {
-    const list = [...profiles]
+    const list = profiles.filter((profile) => profile.role !== 'GERENTE' && profile.role !== 'ADMIN')
     list.sort((a, b) => {
       const nameA = a.full_name || ''
       const nameB = b.full_name || ''
@@ -426,6 +567,225 @@ export default function Admin() {
     })
     return map
   }, [agents])
+
+  const addPauseModalItem = () => {
+    if (!pauseModalForm.pause_type_id || !pauseModalForm.scheduled_time) {
+      setError('Preencha tipo e horario da pausa.')
+      return
+    }
+    setError('')
+    setPauseModalItems((prev) => [
+      ...prev,
+      {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        pause_type_id: pauseModalForm.pause_type_id,
+        scheduled_time: pauseModalForm.scheduled_time,
+        duration_time: pauseModalForm.duration_time
+      }
+    ])
+    setPauseModalForm((prev) => ({ ...prev, scheduled_time: '', duration_time: '' }))
+  }
+
+  const removePauseModalItem = (id) => {
+    setPauseModalItems((prev) => prev.filter((item) => item.id !== id))
+  }
+
+  const savePauseModalItems = async () => {
+    if (!pauseModalAgentId) return
+    if (!pauseModalItems.length) {
+      setPauseModalOpen(false)
+      return
+    }
+    setBusy(true)
+    setError('')
+    try {
+      await Promise.all(
+        pauseModalItems.map((item) =>
+          upsertPauseSchedule({
+            agent_id: pauseModalAgentId,
+            pause_type_id: item.pause_type_id,
+            scheduled_time: item.scheduled_time,
+            duration_minutes: timeToMinutes(item.duration_time)
+          })
+        )
+      )
+      setSuccess('Pausas cadastradas para o agente.')
+      setPauseModalOpen(false)
+      setPauseModalItems([])
+      setPauseModalAgentId('')
+      setPauseModalAgentName('')
+      await refreshAll()
+    } catch (err) {
+      setError(err.message || 'Falha ao cadastrar pausas')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const openAgentEditModal = (agent) => {
+    setAgentEditId(agent.id)
+    setAgentEditForm({
+      full_name: agent.full_name || '',
+      manager_id: agent.manager_id || '',
+      team_id: agent.team_id || ''
+    })
+    setAgentEditScheduleForm({
+      pause_type_id: pauseTypes?.[0]?.id || '',
+      scheduled_time: '',
+      duration_time: ''
+    })
+    setAgentEditModalOpen(true)
+  }
+
+  const closeAgentEditModal = () => {
+    setAgentEditModalOpen(false)
+    setAgentEditId('')
+  }
+
+  const handleAgentSave = async () => {
+    if (!agentEditId) return
+    setError('')
+    setSuccess('')
+    setBusy(true)
+    try {
+      if (!agentEditForm.manager_id) {
+        throw new Error('Selecione um gerente para o agente.')
+      }
+      if (!agentEditForm.team_id) {
+        throw new Error('Selecione um setor para o agente.')
+      }
+      await updateProfile(agentEditId, {
+        full_name: agentEditForm.full_name,
+        role: 'AGENTE',
+        manager_id: agentEditForm.manager_id || null,
+        team_id: agentEditForm.team_id || null
+      })
+      setSuccess('Agente atualizado.')
+      await refreshAll()
+    } catch (err) {
+      setError(err.message || 'Falha ao atualizar agente')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const addAgentSchedule = async () => {
+    if (!agentEditId) return
+    if (!agentEditScheduleForm.pause_type_id || !agentEditScheduleForm.scheduled_time) {
+      setError('Preencha tipo e horario da pausa.')
+      return
+    }
+    setError('')
+    setBusy(true)
+    try {
+      await upsertPauseSchedule({
+        agent_id: agentEditId,
+        pause_type_id: agentEditScheduleForm.pause_type_id,
+        scheduled_time: agentEditScheduleForm.scheduled_time,
+        duration_minutes: timeToMinutes(agentEditScheduleForm.duration_time)
+      })
+      setAgentEditScheduleForm((prev) => ({ ...prev, scheduled_time: '', duration_time: '' }))
+      await refreshAll()
+    } catch (err) {
+      setError(err.message || 'Falha ao adicionar pausa')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const openManagerEditModal = (manager) => {
+    setManagerEditId(manager.id)
+    setManagerEditForm({
+      full_name: manager.full_name || '',
+      email: manager.email || ''
+    })
+    setManagerEditModalOpen(true)
+  }
+
+  const closeManagerEditModal = () => {
+    setManagerEditModalOpen(false)
+    setManagerEditId('')
+  }
+
+  const handleManagerSave = async () => {
+    if (!managerEditId) return
+    setError('')
+    setSuccess('')
+    setBusy(true)
+    try {
+      if (managerEditForm.email && !isValidEmail(managerEditForm.email)) {
+        throw new Error('Email invalido.')
+      }
+      if (managerEditForm.email && isDuplicateEmail(managerEditForm.email, managerEditId)) {
+        throw new Error('Email ja cadastrado.')
+      }
+      const sectorIds = getManagerSectorIds(
+        managerEditId,
+        managers.find((item) => item.id === managerEditId)?.team_id
+      )
+      if (!sectorIds.length) {
+        throw new Error('Selecione ao menos um setor.')
+      }
+      await updateProfile(managerEditId, {
+        role: 'GERENTE',
+        full_name: managerEditForm.full_name,
+        email: managerEditForm.email || null,
+        team_id: sectorIds[0],
+        manager_id: null
+      })
+      await setManagerSectors(managerEditId, sectorIds)
+      setSuccess('Gerente atualizado.')
+      await refreshAll()
+      closeManagerEditModal()
+    } catch (err) {
+      setError(err.message || 'Falha ao atualizar gerente')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const openAdminEditModal = (admin) => {
+    setAdminEditId(admin.id)
+    setAdminEditForm({
+      full_name: admin.full_name || '',
+      email: admin.email || ''
+    })
+    setAdminEditModalOpen(true)
+  }
+
+  const closeAdminEditModal = () => {
+    setAdminEditModalOpen(false)
+    setAdminEditId('')
+  }
+
+  const handleAdminSave = async () => {
+    if (!adminEditId) return
+    setError('')
+    setSuccess('')
+    setBusy(true)
+    try {
+      if (adminEditForm.email && !isValidEmail(adminEditForm.email)) {
+        throw new Error('Email invalido.')
+      }
+      if (adminEditForm.email && isDuplicateEmail(adminEditForm.email, adminEditId)) {
+        throw new Error('Email ja cadastrado.')
+      }
+      await updateProfile(adminEditId, {
+        role: 'ADMIN',
+        full_name: adminEditForm.full_name,
+        email: adminEditForm.email || null,
+        manager_id: null,
+        team_id: null
+      })
+      setSuccess('Admin atualizado.')
+      await refreshAll()
+      closeAdminEditModal()
+    } catch (err) {
+      setError(err.message || 'Falha ao atualizar admin')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const schedulesByAgent = useMemo(() => {
     const map = new Map()
@@ -540,16 +900,28 @@ export default function Admin() {
             Usuarios
           </button>
           <button
-            className={`btn ${tab === 'pauseTypes' ? 'bg-brand-600 text-white' : 'btn-ghost'}`}
-            onClick={() => setTab('pauseTypes')}
+            className={`btn ${tab === 'managers' ? 'bg-brand-600 text-white' : 'btn-ghost'}`}
+            onClick={() => setTab('managers')}
           >
-            Tipos de pausa
+            Gerentes
+          </button>
+          <button
+            className={`btn ${tab === 'admins' ? 'bg-brand-600 text-white' : 'btn-ghost'}`}
+            onClick={() => setTab('admins')}
+          >
+            Admins
           </button>
           <button
             className={`btn ${tab === 'sectors' ? 'bg-brand-600 text-white' : 'btn-ghost'}`}
             onClick={() => setTab('sectors')}
           >
             Setores
+          </button>
+          <button
+            className={`btn ${tab === 'pauseTypes' ? 'bg-brand-600 text-white' : 'btn-ghost'}`}
+            onClick={() => setTab('pauseTypes')}
+          >
+            Tipos de pausa
           </button>
           <button
             className={`btn ${tab === 'pauseSchedules' ? 'bg-brand-600 text-white' : 'btn-ghost'}`}
@@ -693,215 +1065,219 @@ export default function Admin() {
             </div>
 
             <div className="card">
-              <div className="flex items-center justify-between">
-                <h2 className="font-display text-xl font-semibold text-slate-900">Usuarios cadastrados</h2>
-                {loading ? <span className="text-sm text-slate-500">Carregando...</span> : null}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h2 className="font-display text-xl font-semibold text-slate-900">Usuarios cadastrados</h2>
+                  {loading ? <span className="text-sm text-slate-500">Carregando...</span> : null}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className={`btn ${usersView === 'users' ? 'bg-brand-600 text-white' : 'btn-ghost'}`}
+                    onClick={() => setUsersView('users')}
+                  >
+                    Usuarios
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn ${usersView === 'sectors' ? 'bg-brand-600 text-white' : 'btn-ghost'}`}
+                    onClick={() => setUsersView('sectors')}
+                  >
+                    Setores
+                  </button>
+                </div>
               </div>
-              <div className="mt-4 overflow-x-auto">
-                <table className="min-w-full text-sm">
-                  <thead className="text-slate-500">
-                    <tr>
-                      <th className="text-left py-2">
-                        <button
-                          type="button"
-                          className="inline-flex items-center gap-1 text-left text-slate-500 hover:text-slate-700"
-                          onClick={() =>
-                            setUserSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'))
-                          }
-                        >
-                          Nome
-                          <span className="text-[10px]">{userSortDir === 'asc' ? '▲' : '▼'}</span>
-                        </button>
-                      </th>
-                      <th className="text-left py-2">Role</th>
-                      <th className="text-left py-2">Manager</th>
-                      <th className="text-left py-2">Setor</th>
-                      <th className="text-left py-2">Acoes</th>
-                    </tr>
-                  </thead>
-                  <tbody className="text-slate-900">
-                    {sortedProfiles.map((profile) => (
-                      <tr key={profile.id} className="border-t border-slate-100">
-                        <td className="py-2">
-                          <input
-                            className="input"
-                            value={profile.full_name}
-                            onChange={(e) => updateProfileField(profile.id, 'full_name', e.target.value)}
-                          />
-                        </td>
-                        <td className="py-2">
-                          <select
-                            className="input"
-                            value={profile.role}
-                            onChange={(e) => updateProfileField(profile.id, 'role', e.target.value)}
+              {usersView === 'users' ? (
+                <div className="mt-4 overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead className="text-slate-500">
+                      <tr>
+                        <th className="text-left py-2">
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 text-left text-slate-500 hover:text-slate-700"
+                            onClick={() =>
+                              setUserSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'))
+                            }
                           >
-                            <option value="ADMIN">ADMIN</option>
-                            <option value="GERENTE">GERENTE</option>
-                            <option value="AGENTE">AGENTE</option>
-                          </select>
-                        </td>
-                        <td className="py-2">
-                          <select
-                            className="input"
-                            value={profile.manager_id || ''}
-                            onChange={(e) => updateProfileField(profile.id, 'manager_id', e.target.value)}
-                            disabled={profile.role !== 'AGENTE'}
-                          >
-                            <option value="">Nenhum</option>
-                            {managers.map((manager) => (
-                              <option key={manager.id} value={manager.id}>
-                                {manager.full_name}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="py-2">
-                          {profile.role === 'GERENTE' ? (
-                            <div className="flex items-center gap-2">
-                              <select
-                                className="input"
-                                value={
-                                  getManagerSectorIds(profile.id, profile.team_id).length > 1
-                                    ? '__MULTI__'
-                                    : getManagerSectorIds(profile.id, profile.team_id)[0] || ''
-                                }
-                                onChange={(e) => {
-                                  const managerSectorIds = getManagerSectorIds(profile.id, profile.team_id)
-                                  if (managerSectorIds.length > 1) {
-                                    return
-                                  }
-                                  updateProfileField(profile.id, 'team_id', e.target.value)
-                                }}
-                              >
-                                {getManagerSectorIds(profile.id, profile.team_id).length > 1 ? (
-                                  <option value="__MULTI__">Varios</option>
-                                ) : null}
-                                {getManagerSectorIds(profile.id, profile.team_id).map((sectorId) => (
-                                  <option key={sectorId} value={sectorId}>
-                                    {sectorById.get(sectorId) || 'Setor'}
-                                  </option>
-                                ))}
-                                {!getManagerSectorIds(profile.id, profile.team_id).length ? (
-                                  <option value="">Nenhum</option>
-                                ) : null}
-                              </select>
-                              <button
-                                type="button"
-                                className="btn-ghost h-9 w-9 p-0"
-                                title="Editar setores"
-                                aria-label="Editar setores"
-                                onClick={() => setSectorEditManagerId(profile.id)}
-                              >
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                                  <path
-                                    d="M12 20h9"
-                                    stroke="currentColor"
-                                    strokeWidth="1.5"
-                                    strokeLinecap="round"
-                                  />
-                                  <path
-                                    d="M16.5 3.5a2.1 2.1 0 013 3L8 18l-4 1 1-4 11.5-11.5z"
-                                    stroke="currentColor"
-                                    strokeWidth="1.5"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                  />
-                                </svg>
-                              </button>
-                            </div>
-                          ) : (
-                            <select
+                            Nome
+                            <span className="text-[10px]">{userSortDir === 'asc' ? '▲' : '▼'}</span>
+                          </button>
+                        </th>
+                        <th className="text-left py-2">Role</th>
+                        <th className="text-left py-2">Manager</th>
+                        <th className="text-left py-2">Setor</th>
+                        <th className="text-left py-2">Acoes</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-slate-900">
+                      {sortedProfiles.map((profile) => (
+                        <tr key={profile.id} className="border-t border-slate-100">
+                          <td className="py-2">
+                            <input
                               className="input"
-                              value={profile.team_id || ''}
-                              onChange={(e) => updateProfileField(profile.id, 'team_id', e.target.value)}
-                              disabled={profile.role === 'ADMIN'}
-                            >
+                              value={profile.full_name}
+                              onChange={(e) => updateProfileField(profile.id, 'full_name', e.target.value)}
+                              disabled
+                            />
+                          </td>
+                          <td className="py-2">
+                            <select className="input" value={profile.role} disabled>
+                              <option value="ADMIN">ADMIN</option>
+                              <option value="GERENTE">GERENTE</option>
+                              <option value="AGENTE">AGENTE</option>
+                            </select>
+                          </td>
+                          <td className="py-2">
+                            <select className="input" value={profile.manager_id || ''} disabled>
                               <option value="">Nenhum</option>
-                              {sectors.map((sector) => (
-                                <option key={sector.id} value={sector.id}>
-                                  {sector.label}
+                              {managers.map((manager) => (
+                                <option key={manager.id} value={manager.id}>
+                                  {manager.full_name}
                                 </option>
                               ))}
                             </select>
-                          )}
-                        </td>
-                        <td className="py-2">
-                          <div className="flex items-center gap-2">
-                            <button
-                              className="btn-ghost h-9 w-9 p-0"
-                              type="button"
-                              onClick={() => handleUpdate(profile)}
-                              disabled={busy}
-                              title="Salvar"
-                              aria-label="Salvar"
-                            >
-                              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                                <path
-                                  d="M5 7a2 2 0 012-2h8l4 4v8a2 2 0 01-2 2H7a2 2 0 01-2-2V7z"
-                                  stroke="currentColor"
-                                  strokeWidth="1.5"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                />
-                                <path
-                                  d="M9 5v5h6V5"
-                                  stroke="currentColor"
-                                  strokeWidth="1.5"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                />
-                              </svg>
-                            </button>
-                            {profile.role === 'AGENTE' ? (
-                              <button
-                                className="btn-ghost h-9 w-9 p-0 text-red-600"
-                                type="button"
-                                onClick={() => handleDeleteUser(profile)}
-                                disabled={busy}
-                                title="Excluir"
-                                aria-label="Excluir"
-                              >
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                                  <path
-                                    d="M4 7h16"
-                                    stroke="currentColor"
-                                    strokeWidth="1.5"
-                                    strokeLinecap="round"
-                                  />
-                                  <path
-                                    d="M9 7V5h6v2"
-                                    stroke="currentColor"
-                                    strokeWidth="1.5"
-                                    strokeLinecap="round"
-                                  />
-                                  <path
-                                    d="M7 7l1 12h8l1-12"
-                                    stroke="currentColor"
-                                    strokeWidth="1.5"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                  />
-                                </svg>
-                              </button>
-                            ) : null}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                    {!profiles.length ? (
-                      <tr>
-                        <td className="py-3 text-slate-500" colSpan="5">
-                          Nenhum usuario encontrado.
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="mt-6">
-                <h3 className="text-sm font-semibold text-slate-800">Setores</h3>
-                <div className="mt-3 space-y-2">
+                          </td>
+                          <td className="py-2">
+                            {profile.role === 'GERENTE' ? (
+                              <div className="flex items-center gap-2">
+                                <select
+                                  className="input"
+                                  value={
+                                    getManagerSectorIds(profile.id, profile.team_id).length > 1
+                                      ? '__MULTI__'
+                                      : getManagerSectorIds(profile.id, profile.team_id)[0] || ''
+                                  }
+                                  onChange={(e) => {
+                                    const managerSectorIds = getManagerSectorIds(profile.id, profile.team_id)
+                                    if (managerSectorIds.length > 1) {
+                                      return
+                                    }
+                                    updateProfileField(profile.id, 'team_id', e.target.value)
+                                  }}
+                                >
+                                  {getManagerSectorIds(profile.id, profile.team_id).length > 1 ? (
+                                    <option value="__MULTI__">Varios</option>
+                                  ) : null}
+                                  {getManagerSectorIds(profile.id, profile.team_id).map((sectorId) => (
+                                    <option key={sectorId} value={sectorId}>
+                                      {sectorById.get(sectorId) || 'Setor'}
+                                    </option>
+                                  ))}
+                                  {!getManagerSectorIds(profile.id, profile.team_id).length ? (
+                                    <option value="">Nenhum</option>
+                                  ) : null}
+                                </select>
+                                <button
+                                  type="button"
+                                  className="btn-ghost h-9 w-9 p-0"
+                                  title="Editar setores"
+                                  aria-label="Editar setores"
+                                  onClick={() => setSectorEditManagerId(profile.id)}
+                                >
+                                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                    <path
+                                      d="M12 20h9"
+                                      stroke="currentColor"
+                                      strokeWidth="1.5"
+                                      strokeLinecap="round"
+                                    />
+                                    <path
+                                      d="M16.5 3.5a2.1 2.1 0 013 3L8 18l-4 1 1-4 11.5-11.5z"
+                                      stroke="currentColor"
+                                      strokeWidth="1.5"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    />
+                                  </svg>
+                                </button>
+                              </div>
+                            ) : (
+                              <select className="input" value={profile.team_id || ''} disabled>
+                                <option value="">Nenhum</option>
+                                {sectors.map((sector) => (
+                                  <option key={sector.id} value={sector.id}>
+                                    {sector.label}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                          </td>
+                          <td className="py-2">
+                            <div className="flex items-center gap-2">
+                              {profile.role === 'AGENTE' ? (
+                                <button
+                                  type="button"
+                                  className="btn-ghost h-9 w-9 p-0"
+                                  title="Editar agente"
+                                  aria-label="Editar agente"
+                                  onClick={() => openAgentEditModal(profile)}
+                                >
+                                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                    <path
+                                      d="M12 20h9"
+                                      stroke="currentColor"
+                                      strokeWidth="1.5"
+                                      strokeLinecap="round"
+                                    />
+                                    <path
+                                      d="M16.5 3.5a2.1 2.1 0 013 3L8 18l-4 1 1-4 11.5-11.5z"
+                                      stroke="currentColor"
+                                      strokeWidth="1.5"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    />
+                                  </svg>
+                                </button>
+                              ) : null}
+                              {profile.role === 'AGENTE' ? (
+                                <button
+                                  className="btn-ghost h-9 w-9 p-0 text-red-600"
+                                  type="button"
+                                  onClick={() => handleDeleteUser(profile)}
+                                  disabled={busy}
+                                  title="Excluir"
+                                  aria-label="Excluir"
+                                >
+                                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                    <path
+                                      d="M4 7h16"
+                                      stroke="currentColor"
+                                      strokeWidth="1.5"
+                                      strokeLinecap="round"
+                                    />
+                                    <path
+                                      d="M9 7V5h6v2"
+                                      stroke="currentColor"
+                                      strokeWidth="1.5"
+                                      strokeLinecap="round"
+                                    />
+                                    <path
+                                      d="M7 7l1 12h8l1-12"
+                                      stroke="currentColor"
+                                      strokeWidth="1.5"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    />
+                                  </svg>
+                                </button>
+                              ) : null}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                      {!profiles.length ? (
+                        <tr>
+                          <td className="py-3 text-slate-500" colSpan="5">
+                            Nenhum usuario encontrado.
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="mt-4 space-y-2">
                   {sectors.map((sector) => {
                     const items = agentsBySector[sector.id] || []
                     const isOpen = expandedSectorId === sector.id
@@ -927,7 +1303,13 @@ export default function Admin() {
                                     key={agent.id}
                                     className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2"
                                   >
-                                    <span className="text-sm text-slate-900">{agent.full_name}</span>
+                                    <button
+                                      type="button"
+                                      className="text-sm font-medium text-emerald-700 hover:underline"
+                                      onClick={() => openAgentEditModal(agent)}
+                                    >
+                                      {agent.full_name}
+                                    </button>
                                   </div>
                                 ))}
                               </div>
@@ -941,7 +1323,7 @@ export default function Admin() {
                   })}
                   {!sectors.length ? <p className="text-sm text-slate-500">Nenhum setor cadastrado.</p> : null}
                 </div>
-              </div>
+              )}
             </div>
           </div>
         ) : null}
@@ -950,6 +1332,591 @@ export default function Admin() {
           managerId={sectorEditManagerId}
           onClose={() => setSectorEditManagerId('')}
         />
+
+        {agentEditModalOpen ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-6">
+            <div className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
+              <div className="flex items-center justify-between gap-4">
+                <h3 className="font-display text-lg font-semibold text-slate-900">
+                  Editar agente
+                </h3>
+                <button type="button" className="btn-ghost" onClick={closeAgentEditModal}>
+                  Fechar
+                </button>
+              </div>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                <div>
+                  <label className="label">Nome</label>
+                  <input
+                    className="input mt-1"
+                    value={agentEditForm.full_name}
+                    onChange={(e) =>
+                      setAgentEditForm((prev) => ({ ...prev, full_name: e.target.value }))
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="label">Gerente</label>
+                  <select
+                    className="input mt-1"
+                    value={agentEditForm.manager_id}
+                    onChange={(e) =>
+                      setAgentEditForm((prev) => ({ ...prev, manager_id: e.target.value }))
+                    }
+                  >
+                    <option value="">Nenhum</option>
+                    {managers.map((manager) => (
+                      <option key={manager.id} value={manager.id}>
+                        {manager.full_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="label">Setor</label>
+                  <select
+                    className="input mt-1"
+                    value={agentEditForm.team_id}
+                    onChange={(e) =>
+                      setAgentEditForm((prev) => ({ ...prev, team_id: e.target.value }))
+                    }
+                  >
+                    <option value="">Nenhum</option>
+                    {sectors.map((sector) => (
+                      <option key={sector.id} value={sector.id}>
+                        {sector.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="mt-4 flex justify-end">
+                <button type="button" className="btn-primary" onClick={handleAgentSave} disabled={busy}>
+                  {busy ? 'Salvando...' : 'Salvar agente'}
+                </button>
+              </div>
+
+              <div className="mt-6">
+                <h4 className="text-sm font-semibold text-slate-800">Pausas registradas</h4>
+                <div className="mt-3 overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead className="text-slate-500">
+                      <tr>
+                        <th className="text-left py-2">Tipo</th>
+                        <th className="text-left py-2">Horario</th>
+                        <th className="text-left py-2">Duracao</th>
+                        <th className="text-left py-2">Acoes</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-slate-900">
+                      {pauseSchedules
+                        .filter((schedule) => schedule.agent_id === agentEditId)
+                        .map((schedule) => (
+                          <tr key={schedule.id} className="border-t border-slate-100">
+                            <td className="py-2">{schedule.pause_types?.label || '-'}</td>
+                            <td className="py-2">
+                              <input
+                                className="input"
+                                type="time"
+                                step="60"
+                                value={normalizeTime(schedule.scheduled_time)}
+                                onChange={(e) =>
+                                  updateScheduleField(schedule.id, 'scheduled_time', e.target.value)
+                                }
+                              />
+                            </td>
+                            <td className="py-2">
+                              <input
+                                className="input"
+                                type="time"
+                                step="60"
+                                value={minutesToTime(schedule.duration_minutes)}
+                                onChange={(e) =>
+                                  updateScheduleField(
+                                    schedule.id,
+                                    'duration_minutes',
+                                    timeToMinutes(e.target.value)
+                                  )
+                                }
+                              />
+                            </td>
+                            <td className="py-2">
+                              <div className="flex gap-2">
+                                <button
+                                  className="btn-ghost"
+                                  type="button"
+                                  onClick={() => handleScheduleUpdate(schedule)}
+                                  disabled={busy}
+                                >
+                                  Salvar
+                                </button>
+                                <button
+                                  className="btn-ghost text-red-600"
+                                  type="button"
+                                  onClick={() => {
+                                    const confirmed = window.confirm('Remover esta pausa?')
+                                    if (!confirmed) return
+                                    handleScheduleDelete(schedule)
+                                  }}
+                                  disabled={busy}
+                                >
+                                  Remover
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      {!pauseSchedules.filter((schedule) => schedule.agent_id === agentEditId).length ? (
+                        <tr>
+                          <td className="py-3 text-slate-500" colSpan="4">
+                            Nenhuma pausa cadastrada.
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <h4 className="text-sm font-semibold text-slate-800">Adicionar pausa</h4>
+                <div className="mt-3 grid gap-3 md:grid-cols-3">
+                  <div>
+                    <label className="label">Tipo</label>
+                    <select
+                      className="input mt-1"
+                      value={agentEditScheduleForm.pause_type_id}
+                      onChange={(e) =>
+                        setAgentEditScheduleForm((prev) => ({ ...prev, pause_type_id: e.target.value }))
+                      }
+                    >
+                      <option value="">Selecione</option>
+                      {pauseTypes.map((type) => (
+                        <option key={type.id} value={type.id}>
+                          {type.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="label">Horario</label>
+                    <input
+                      className="input mt-1"
+                      type="time"
+                      step="60"
+                      value={agentEditScheduleForm.scheduled_time}
+                      onChange={(e) =>
+                        setAgentEditScheduleForm((prev) => ({ ...prev, scheduled_time: e.target.value }))
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className="label">Duracao (hh:mm)</label>
+                    <input
+                      className="input mt-1"
+                      type="time"
+                      step="60"
+                      value={agentEditScheduleForm.duration_time}
+                      onChange={(e) =>
+                        setAgentEditScheduleForm((prev) => ({ ...prev, duration_time: e.target.value }))
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="mt-3 flex justify-end">
+                  <button type="button" className="btn-ghost" onClick={addAgentSchedule}>
+                    Adicionar pausa
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {managerEditModalOpen ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-6">
+            <div className="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
+              <div className="flex items-center justify-between gap-4">
+                <h3 className="font-display text-lg font-semibold text-slate-900">
+                  Editar gerente
+                </h3>
+                <button type="button" className="btn-ghost" onClick={closeManagerEditModal}>
+                  Fechar
+                </button>
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <div>
+                  <label className="label">Nome</label>
+                  <input
+                    className="input mt-1"
+                    value={managerEditForm.full_name}
+                    onChange={(e) =>
+                      setManagerEditForm((prev) => ({ ...prev, full_name: e.target.value }))
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="label">Email</label>
+                  <input
+                    className="input mt-1"
+                    value={managerEditForm.email}
+                    onChange={(e) =>
+                      setManagerEditForm((prev) => ({ ...prev, email: e.target.value }))
+                    }
+                  />
+                </div>
+              </div>
+              <div className="mt-4">
+                <label className="label">Setores</label>
+                <p className="text-xs text-slate-500">
+                  Selecione um ou mais setores (Ctrl/Cmd para varios)
+                </p>
+                <select
+                  className="input mt-2"
+                  multiple
+                  value={getManagerSectorIds(
+                    managerEditId,
+                    managers.find((item) => item.id === managerEditId)?.team_id
+                  )}
+                  onChange={(e) => {
+                    const selected = Array.from(e.target.selectedOptions).map((opt) => opt.value)
+                    setManagerSectorsMap((current) => ({ ...current, [managerEditId]: selected }))
+                  }}
+                >
+                  {sectors.map((sector) => (
+                    <option key={sector.id} value={sector.id}>
+                      {sector.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="mt-5 flex justify-end gap-2">
+                <button type="button" className="btn-ghost" onClick={closeManagerEditModal}>
+                  Cancelar
+                </button>
+                <button type="button" className="btn-primary" onClick={handleManagerSave} disabled={busy}>
+                  {busy ? 'Salvando...' : 'Salvar gerente'}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {adminEditModalOpen ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-6">
+            <div className="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
+              <div className="flex items-center justify-between gap-4">
+                <h3 className="font-display text-lg font-semibold text-slate-900">
+                  Editar admin
+                </h3>
+                <button type="button" className="btn-ghost" onClick={closeAdminEditModal}>
+                  Fechar
+                </button>
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <div>
+                  <label className="label">Nome</label>
+                  <input
+                    className="input mt-1"
+                    value={adminEditForm.full_name}
+                    onChange={(e) =>
+                      setAdminEditForm((prev) => ({ ...prev, full_name: e.target.value }))
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="label">Email</label>
+                  <input
+                    className="input mt-1"
+                    value={adminEditForm.email}
+                    onChange={(e) =>
+                      setAdminEditForm((prev) => ({ ...prev, email: e.target.value }))
+                    }
+                  />
+                </div>
+              </div>
+              <div className="mt-5 flex justify-end gap-2">
+                <button type="button" className="btn-ghost" onClick={closeAdminEditModal}>
+                  Cancelar
+                </button>
+                <button type="button" className="btn-primary" onClick={handleAdminSave} disabled={busy}>
+                  {busy ? 'Salvando...' : 'Salvar admin'}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {pauseModalOpen ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+            <div className="w-full max-w-2xl rounded-2xl bg-white p-5 shadow-xl">
+              <div className="flex items-center justify-between gap-4">
+                <h3 className="font-display text-lg font-semibold text-slate-900">
+                  Pausas do agente {pauseModalAgentName || ''}
+                </h3>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => setPauseModalOpen(false)}
+                >
+                  Fechar
+                </button>
+              </div>
+              <p className="mt-1 text-sm text-slate-600">
+                Cadastre quantas pausas forem necessarias para este agente.
+              </p>
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                <div>
+                  <label className="label">Tipo</label>
+                  <select
+                    className="input mt-1"
+                    value={pauseModalForm.pause_type_id}
+                    onChange={(e) =>
+                      setPauseModalForm((prev) => ({ ...prev, pause_type_id: e.target.value }))
+                    }
+                  >
+                    <option value="">Selecione</option>
+                    {pauseTypes.map((type) => (
+                      <option key={type.id} value={type.id}>
+                        {type.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="label">Horario</label>
+                  <input
+                    className="input mt-1"
+                    type="time"
+                    step="60"
+                    value={pauseModalForm.scheduled_time}
+                    onChange={(e) =>
+                      setPauseModalForm((prev) => ({ ...prev, scheduled_time: e.target.value }))
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="label">Duracao (hh:mm)</label>
+                  <input
+                    className="input mt-1"
+                    type="time"
+                    step="60"
+                    value={pauseModalForm.duration_time}
+                    onChange={(e) =>
+                      setPauseModalForm((prev) => ({ ...prev, duration_time: e.target.value }))
+                    }
+                  />
+                </div>
+              </div>
+              <div className="mt-3 flex justify-end">
+                <button type="button" className="btn-ghost" onClick={addPauseModalItem}>
+                  Adicionar pausa
+                </button>
+              </div>
+
+              <div className="mt-4">
+                {pauseModalItems.length ? (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead className="text-slate-500">
+                        <tr>
+                          <th className="text-left py-2">Tipo</th>
+                          <th className="text-left py-2">Horario</th>
+                          <th className="text-left py-2">Duracao</th>
+                          <th className="text-left py-2">Acoes</th>
+                        </tr>
+                      </thead>
+                      <tbody className="text-slate-900">
+                        {pauseModalItems.map((item) => (
+                          <tr key={item.id} className="border-t border-slate-100">
+                            <td className="py-2">
+                              {pauseTypes.find((type) => type.id === item.pause_type_id)?.label || '-'}
+                            </td>
+                            <td className="py-2">{item.scheduled_time}</td>
+                            <td className="py-2">{item.duration_time || '-'}</td>
+                            <td className="py-2">
+                              <button
+                                type="button"
+                                className="btn-ghost text-red-600"
+                                onClick={() => removePauseModalItem(item.id)}
+                              >
+                                Remover
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-500">Nenhuma pausa adicionada ainda.</p>
+                )}
+              </div>
+
+              <div className="mt-5 flex justify-end gap-2">
+                <button type="button" className="btn-ghost" onClick={() => setPauseModalOpen(false)}>
+                  Depois
+                </button>
+                <button type="button" className="btn-primary" onClick={savePauseModalItems} disabled={busy}>
+                  {busy ? 'Salvando...' : 'Salvar pausas'}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {tab === 'managers' ? (
+          <div className="grid gap-6 lg:grid-cols-[2fr_3fr]">
+            <div className="card">
+              <h2 className="font-display text-xl font-semibold text-slate-900">Criar gerente</h2>
+              <p className="text-sm text-slate-600 mt-1">Gerentes podem ter multiplos setores.</p>
+              <form className="mt-4 space-y-3" onSubmit={handleCreateManager}>
+                <div>
+                  <label className="label">Email</label>
+                  <input
+                    className="input mt-1"
+                    value={managerForm.email}
+                    onChange={(e) => setManagerForm({ ...managerForm, email: e.target.value })}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="label">Senha provisoria</label>
+                  <input
+                    className="input mt-1"
+                    type="password"
+                    value={managerForm.password}
+                    onChange={(e) => setManagerForm({ ...managerForm, password: e.target.value })}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="label">Nome completo</label>
+                  <input
+                    className="input mt-1"
+                    value={managerForm.full_name}
+                    onChange={(e) => setManagerForm({ ...managerForm, full_name: e.target.value })}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="label">Setores</label>
+                  <p className="text-xs text-slate-500">Selecione um ou mais setores (Ctrl/Cmd para varios)</p>
+                  <select
+                    className="input mt-2"
+                    multiple
+                    value={managerForm.sector_ids}
+                    onChange={(e) => {
+                      const selected = Array.from(e.target.selectedOptions).map((opt) => opt.value)
+                      setManagerForm((prev) => ({ ...prev, sector_ids: selected }))
+                    }}
+                    required
+                  >
+                    {sectors.map((sector) => (
+                      <option key={sector.id} value={sector.id}>
+                        {sector.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <button className="btn-primary w-full" type="submit" disabled={busy}>
+                  {busy ? 'Criando...' : 'Criar gerente'}
+                </button>
+              </form>
+            </div>
+
+            <div className="card">
+              <h2 className="font-display text-xl font-semibold text-slate-900">Gerentes cadastrados</h2>
+              <div className="mt-4 space-y-3">
+                {managers.map((manager) => {
+                  const sectorIds = getManagerSectorIds(manager.id, manager.team_id)
+                  return (
+                    <button
+                      key={manager.id}
+                      type="button"
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-left transition hover:bg-slate-50"
+                      onClick={() => openManagerEditModal(manager)}
+                    >
+                      <p className="text-sm font-semibold text-slate-900">{manager.full_name}</p>
+                      <p className="text-xs text-slate-500">
+                        {sectorIds.length
+                          ? sectorIds.map((id) => sectorById.get(id) || 'Setor').join(', ')
+                          : 'Sem setores'}
+                      </p>
+                    </button>
+                  )
+                })}
+                {!managers.length ? <p className="text-sm text-slate-500">Nenhum gerente cadastrado.</p> : null}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {tab === 'admins' ? (
+          <div className="grid gap-6 lg:grid-cols-[2fr_3fr]">
+            <div className="card">
+              <h2 className="font-display text-xl font-semibold text-slate-900">Criar admin</h2>
+              <p className="text-sm text-slate-600 mt-1">Admins não possuem setor nem gerente.</p>
+              <form className="mt-4 space-y-3" onSubmit={handleCreateAdmin}>
+                <div>
+                  <label className="label">Email</label>
+                  <input
+                    className="input mt-1"
+                    value={adminForm.email}
+                    onChange={(e) => setAdminForm({ ...adminForm, email: e.target.value })}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="label">Senha provisoria</label>
+                  <input
+                    className="input mt-1"
+                    type="password"
+                    value={adminForm.password}
+                    onChange={(e) => setAdminForm({ ...adminForm, password: e.target.value })}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="label">Nome completo</label>
+                  <input
+                    className="input mt-1"
+                    value={adminForm.full_name}
+                    onChange={(e) => setAdminForm({ ...adminForm, full_name: e.target.value })}
+                    required
+                  />
+                </div>
+                <button className="btn-primary w-full" type="submit" disabled={busy}>
+                  {busy ? 'Criando...' : 'Criar admin'}
+                </button>
+              </form>
+            </div>
+
+            <div className="card">
+              <h2 className="font-display text-xl font-semibold text-slate-900">Admins cadastrados</h2>
+              <div className="mt-4 space-y-2">
+                {profiles
+                  .filter((profile) => profile.role === 'ADMIN')
+                  .map((admin) => (
+                    <button
+                      key={admin.id}
+                      type="button"
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-left transition hover:bg-slate-50"
+                      onClick={() => openAdminEditModal(admin)}
+                    >
+                      <p className="text-sm font-semibold text-slate-900">{admin.full_name}</p>
+                      <p className="text-xs text-slate-500">{admin.email || '-'}</p>
+                    </button>
+                  ))}
+                {!profiles.filter((profile) => profile.role === 'ADMIN').length ? (
+                  <p className="text-sm text-slate-500">Nenhum admin cadastrado.</p>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {tab === 'pauseTypes' ? (
           <div className="grid gap-6 lg:grid-cols-[2fr_3fr]">
