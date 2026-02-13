@@ -70,6 +70,16 @@ export async function getLatePausesSummary({ fromDate, limit = 5 } = {}) {
   return { items, count }
 }
 
+export async function listActiveLatePauses({ limit = 50 } = {}) {
+  const payload = {
+    p_now: new Date().toISOString(),
+    p_limit: limit
+  }
+  const { data, error } = await supabase.rpc('list_active_late_pauses', payload)
+  if (error) throw error
+  return data || []
+}
+
 export async function markLatePauseAsRead(pauseId, managerId) {
   if (!pauseId || !managerId) throw new Error('Missing pauseId or managerId')
   const { data, error } = await supabase.from('pause_notifications').upsert(

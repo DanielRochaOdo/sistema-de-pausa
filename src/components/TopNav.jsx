@@ -1,7 +1,7 @@
 ﻿import { useEffect, useRef, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { useAuth } from '../contexts/useAuth'
-import { getLatePausesSummary, listActivePauses, listPauseSchedules, markAllLatePausesAsRead } from '../services/apiPauses'
+import { getLatePausesSummary, listActiveLatePauses, markAllLatePausesAsRead } from '../services/apiPauses'
 import { supabase } from '../services/supabaseClient'
 import { formatDateTime, formatDuration, startOfToday } from '../utils/format'
 
@@ -10,11 +10,9 @@ export default function TopNav({ agentControls }) {
   const [latePauses, setLatePauses] = useState([])
   const [lateCount, setLateCount] = useState(0)
   const [bellOpen, setBellOpen] = useState(false)
-  const [activePauses, setActivePauses] = useState([])
-  const [pauseSchedules, setPauseSchedules] = useState([])
   const [activeLatePauses, setActiveLatePauses] = useState([])
-  const [activeLateNow, setActiveLateNow] = useState(Date.now())
   const prevTotalLateRef = useRef(0)
+  const prevActiveLateIdsRef = useRef(new Set())
 
   const showAgent = profile?.role === 'AGENTE'
   const showManager = profile?.role === 'GERENTE' || profile?.role === 'ADMIN'
@@ -33,29 +31,19 @@ export default function TopNav({ agentControls }) {
     }
   }
 
-  const loadActivePauses = async () => {
+  const loadActiveLatePauses = async () => {
     try {
-      const data = await listActivePauses()
-      setActivePauses(data || [])
+      const data = await listActiveLatePauses({ limit: 20 })
+      setActiveLatePauses(data || [])
     } catch (err) {
-      console.error('[notifications] failed to load active pauses', err?.message || err)
-    }
-  }
-
-  const loadPauseSchedules = async () => {
-    try {
-      const data = await listPauseSchedules()
-      setPauseSchedules(data || [])
-    } catch (err) {
-      console.error('[notifications] failed to load pause schedules', err?.message || err)
+      console.error('[notifications] failed to load active late pauses', err?.message || err)
     }
   }
 
   useEffect(() => {
     if (!showBell) return
     loadLatePauses()
-    loadActivePauses()
-    loadPauseSchedules()
+    loadActiveLatePauses()
   }, [showBell])
 
   useEffect(() => {
@@ -103,7 +91,7 @@ export default function TopNav({ agentControls }) {
           schema: 'public',
           table: 'pauses'
         },
-        () => loadActivePauses()
+        () => loadActiveLatePauses()
       )
       .subscribe()
 
@@ -116,7 +104,7 @@ export default function TopNav({ agentControls }) {
           schema: 'public',
           table: 'pause_schedules'
         },
-        () => loadPauseSchedules()
+        () => loadActiveLatePauses()
       )
       .subscribe()
 
@@ -137,14 +125,8 @@ export default function TopNav({ agentControls }) {
     if (!showBell) return
     const interval = setInterval(() => {
       loadLatePauses()
-      loadActivePauses()
+      loadActiveLatePauses()
     }, 15000)
-    return () => clearInterval(interval)
-  }, [showBell])
-
-  useEffect(() => {
-    if (!showBell) return
-    const interval = setInterval(() => setActiveLateNow(Date.now()), 1000)
     return () => clearInterval(interval)
   }, [showBell])
 
@@ -159,39 +141,19 @@ export default function TopNav({ agentControls }) {
 
   useEffect(() => {
     if (!showBell) return
-    const scheduleMap = new Map(
-      (pauseSchedules || []).map((schedule) => [
-        `${schedule.agent_id}:${schedule.pause_type_id}`,
-        schedule.duration_minutes
-      ])
-    )
-
-    const items = (activePauses || [])
-      .map((pause) => {
-        const limitMinutes =
-          scheduleMap.get(`${pause.agent_id}:${pause.pause_type_id}`) ??
-          pause.pause_types?.limit_minutes ??
-          null
-        if (!limitMinutes || limitMinutes <= 0) return null
-        const elapsedSeconds = Math.max(
-          0,
-          Math.floor((activeLateNow - new Date(pause.started_at).getTime()) / 1000)
-        )
-        const limitSeconds = limitMinutes * 60
-        if (elapsedSeconds <= limitSeconds) return null
-        return {
-          pause_id: pause.id,
-          agent_name: pause.profiles?.full_name || 'Agente',
-          pause_type_label: pause.pause_types?.label || '-',
-          started_at: pause.started_at,
-          elapsed_seconds: elapsedSeconds,
-          limit_seconds: limitSeconds
-        }
-      })
-      .filter(Boolean)
-
-    setActiveLatePauses(items)
-  }, [showBell, activePauses, pauseSchedules, activeLateNow])
+    const currentIds = new Set(activeLatePauses.map((pause) => pause.pause_id))
+    const prevIds = prevActiveLateIdsRef.current
+    let hasNew = false
+    currentIds.forEach((id) => {
+      if (!prevIds.has(id)) {
+        hasNew = true
+      }
+    })
+    if (hasNew && currentIds.size > 0) {
+      setBellOpen(true)
+    }
+    prevActiveLateIdsRef.current = currentIds
+  }, [showBell, activeLatePauses])
 
   const handleMarkAllAsRead = async () => {
     try {

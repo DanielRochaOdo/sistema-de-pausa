@@ -139,6 +139,11 @@ export default function Admin() {
     )
   }
 
+  const requiresScheduleTime = (pauseTypeId) => {
+    const type = pauseTypes.find((item) => item.id === pauseTypeId)
+    return type?.code !== 'BANHEIRO'
+  }
+
   const refreshAll = async () => {
     setLoading(true)
     setError('')
@@ -435,18 +440,20 @@ export default function Admin() {
   }
 
   const handleScheduleCreate = async () => {
-    if (!scheduleForm.agent_id || !scheduleForm.pause_type_id || !scheduleForm.scheduled_time) {
-      setError('Preencha agente, tipo e horario da pausa.')
+    const needsTime = requiresScheduleTime(scheduleForm.pause_type_id)
+    if (!scheduleForm.agent_id || !scheduleForm.pause_type_id || (needsTime && !scheduleForm.scheduled_time)) {
+      setError('Preencha agente e tipo. Horario e obrigatorio exceto Banheiro.')
       return
     }
     setError('')
     setSuccess('')
     setBusy(true)
     try {
+      const scheduledTime = needsTime ? scheduleForm.scheduled_time : scheduleForm.scheduled_time || null
       await upsertPauseSchedule({
         agent_id: scheduleForm.agent_id,
         pause_type_id: scheduleForm.pause_type_id,
-        scheduled_time: scheduleForm.scheduled_time,
+        scheduled_time: scheduledTime,
         duration_minutes: timeToMinutes(scheduleForm.duration_time)
       })
       setScheduleForm({ agent_id: '', pause_type_id: '', scheduled_time: '', duration_time: '' })
@@ -460,19 +467,21 @@ export default function Admin() {
   }
 
   const handleScheduleUpdate = async (schedule) => {
-    if (!schedule?.agent_id || !schedule?.pause_type_id || !schedule?.scheduled_time) {
-      setError('Preencha agente, tipo e horario da pausa.')
+    const needsTime = requiresScheduleTime(schedule?.pause_type_id)
+    if (!schedule?.agent_id || !schedule?.pause_type_id || (needsTime && !schedule?.scheduled_time)) {
+      setError('Preencha agente e tipo. Horario e obrigatorio exceto Banheiro.')
       return
     }
     setError('')
     setSuccess('')
     setBusy(true)
     try {
+      const scheduledTime = needsTime ? schedule.scheduled_time : schedule.scheduled_time || null
       await upsertPauseSchedule({
         id: schedule.id,
         agent_id: schedule.agent_id,
         pause_type_id: schedule.pause_type_id,
-        scheduled_time: schedule.scheduled_time,
+        scheduled_time: scheduledTime,
         duration_minutes: schedule.duration_minutes ?? null
       })
       setSuccess('Pausa programada atualizada.')
@@ -569,17 +578,19 @@ export default function Admin() {
   }, [agents])
 
   const addPauseModalItem = () => {
-    if (!pauseModalForm.pause_type_id || !pauseModalForm.scheduled_time) {
-      setError('Preencha tipo e horario da pausa.')
+    const needsTime = requiresScheduleTime(pauseModalForm.pause_type_id)
+    if (!pauseModalForm.pause_type_id || (needsTime && !pauseModalForm.scheduled_time)) {
+      setError('Preencha tipo. Horario e obrigatorio exceto Banheiro.')
       return
     }
     setError('')
+    const scheduledTime = needsTime ? pauseModalForm.scheduled_time : pauseModalForm.scheduled_time || null
     setPauseModalItems((prev) => [
       ...prev,
       {
         id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
         pause_type_id: pauseModalForm.pause_type_id,
-        scheduled_time: pauseModalForm.scheduled_time,
+        scheduled_time: scheduledTime,
         duration_time: pauseModalForm.duration_time
       }
     ])
@@ -604,7 +615,7 @@ export default function Admin() {
           upsertPauseSchedule({
             agent_id: pauseModalAgentId,
             pause_type_id: item.pause_type_id,
-            scheduled_time: item.scheduled_time,
+            scheduled_time: item.scheduled_time || null,
             duration_minutes: timeToMinutes(item.duration_time)
           })
         )
@@ -671,17 +682,21 @@ export default function Admin() {
 
   const addAgentSchedule = async () => {
     if (!agentEditId) return
-    if (!agentEditScheduleForm.pause_type_id || !agentEditScheduleForm.scheduled_time) {
-      setError('Preencha tipo e horario da pausa.')
+    const needsTime = requiresScheduleTime(agentEditScheduleForm.pause_type_id)
+    if (!agentEditScheduleForm.pause_type_id || (needsTime && !agentEditScheduleForm.scheduled_time)) {
+      setError('Preencha tipo. Horario e obrigatorio exceto Banheiro.')
       return
     }
     setError('')
     setBusy(true)
     try {
+      const scheduledTime = needsTime
+        ? agentEditScheduleForm.scheduled_time
+        : agentEditScheduleForm.scheduled_time || null
       await upsertPauseSchedule({
         agent_id: agentEditId,
         pause_type_id: agentEditScheduleForm.pause_type_id,
-        scheduled_time: agentEditScheduleForm.scheduled_time,
+        scheduled_time: scheduledTime,
         duration_minutes: timeToMinutes(agentEditScheduleForm.duration_time)
       })
       setAgentEditScheduleForm((prev) => ({ ...prev, scheduled_time: '', duration_time: '' }))
@@ -796,7 +811,9 @@ export default function Admin() {
       map.get(key).push(schedule)
     })
     map.forEach((items) => {
-      items.sort((a, b) => String(a.scheduled_time || '').localeCompare(String(b.scheduled_time || '')))
+      items.sort((a, b) =>
+        String(a.scheduled_time || '99:99:99').localeCompare(String(b.scheduled_time || '99:99:99'))
+      )
     })
     return map
   }, [pauseSchedules])
@@ -813,8 +830,8 @@ export default function Admin() {
     const list = [...agents]
     const nextTime = (agentId) => {
       const items = schedulesByAgent.get(agentId) || []
-      if (!items.length) return null
-      return items[0]?.scheduled_time || null
+      const withTime = items.find((item) => item.scheduled_time)
+      return withTime?.scheduled_time || null
     }
     return list.sort((a, b) => {
       const aTime = nextTime(a.id)
@@ -1734,7 +1751,7 @@ export default function Admin() {
                             <td className="py-2">
                               {pauseTypes.find((type) => type.id === item.pause_type_id)?.label || '-'}
                             </td>
-                            <td className="py-2">{item.scheduled_time}</td>
+                            <td className="py-2">{normalizeTime(item.scheduled_time) || '-'}</td>
                             <td className="py-2">{item.duration_time || '-'}</td>
                             <td className="py-2">
                               <button

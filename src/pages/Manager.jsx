@@ -87,6 +87,11 @@ export default function Manager() {
     duration_time: ''
   })
 
+  const requiresScheduleTime = (pauseTypeId) => {
+    const type = pauseTypes.find((item) => item.id === pauseTypeId)
+    return type?.code !== 'BANHEIRO'
+  }
+
   const resetFilters = () => {
     setPeriod('week')
     setFromDate(formatInputDate(startOfWeek()))
@@ -269,17 +274,19 @@ export default function Manager() {
   }
 
   const handleScheduleCreate = async () => {
-    if (!scheduleForm.agent_id || !scheduleForm.pause_type_id || !scheduleForm.scheduled_time) {
-      setScheduleError('Preencha agente, tipo e horario da pausa.')
+    const needsTime = requiresScheduleTime(scheduleForm.pause_type_id)
+    if (!scheduleForm.agent_id || !scheduleForm.pause_type_id || (needsTime && !scheduleForm.scheduled_time)) {
+      setScheduleError('Preencha agente e tipo. Horario e obrigatorio exceto Banheiro.')
       return
     }
     setScheduleError('')
     setScheduleBusy(true)
     try {
+      const scheduledTime = needsTime ? scheduleForm.scheduled_time : scheduleForm.scheduled_time || null
       await upsertPauseSchedule({
         agent_id: scheduleForm.agent_id,
         pause_type_id: scheduleForm.pause_type_id,
-        scheduled_time: scheduleForm.scheduled_time,
+        scheduled_time: scheduledTime,
         duration_minutes: timeToMinutes(scheduleForm.duration_time)
       })
       setScheduleForm({ agent_id: '', pause_type_id: '', scheduled_time: '', duration_time: '' })
@@ -292,18 +299,20 @@ export default function Manager() {
   }
 
   const handleScheduleUpdate = async (schedule) => {
-    if (!schedule?.agent_id || !schedule?.pause_type_id || !schedule?.scheduled_time) {
-      setScheduleError('Preencha agente, tipo e horario da pausa.')
+    const needsTime = requiresScheduleTime(schedule?.pause_type_id)
+    if (!schedule?.agent_id || !schedule?.pause_type_id || (needsTime && !schedule?.scheduled_time)) {
+      setScheduleError('Preencha agente e tipo. Horario e obrigatorio exceto Banheiro.')
       return
     }
     setScheduleError('')
     setScheduleBusy(true)
     try {
+      const scheduledTime = needsTime ? schedule.scheduled_time : schedule.scheduled_time || null
       await upsertPauseSchedule({
         id: schedule.id,
         agent_id: schedule.agent_id,
         pause_type_id: schedule.pause_type_id,
-        scheduled_time: schedule.scheduled_time,
+        scheduled_time: scheduledTime,
         duration_minutes: schedule.duration_minutes ?? null
       })
       await loadSchedules()
@@ -396,7 +405,9 @@ export default function Manager() {
       map.get(key).push(schedule)
     })
     map.forEach((items) => {
-      items.sort((a, b) => String(a.scheduled_time || '').localeCompare(String(b.scheduled_time || '')))
+      items.sort((a, b) =>
+        String(a.scheduled_time || '99:99:99').localeCompare(String(b.scheduled_time || '99:99:99'))
+      )
     })
     return map
   }, [pauseSchedules])
@@ -442,8 +453,8 @@ export default function Manager() {
     const list = [...agents]
     const nextTime = (agentId) => {
       const items = schedulesByAgent.get(agentId) || []
-      if (!items.length) return null
-      return items[0]?.scheduled_time || null
+      const withTime = items.find((item) => item.scheduled_time)
+      return withTime?.scheduled_time || null
     }
     return list.sort((a, b) => {
       const aTime = nextTime(a.id)
@@ -562,17 +573,21 @@ export default function Manager() {
 
   const addAgentSchedule = async () => {
     if (!agentModalId) return
-    if (!agentModalScheduleForm.pause_type_id || !agentModalScheduleForm.scheduled_time) {
-      setScheduleError('Preencha tipo e horario da pausa.')
+    const needsTime = requiresScheduleTime(agentModalScheduleForm.pause_type_id)
+    if (!agentModalScheduleForm.pause_type_id || (needsTime && !agentModalScheduleForm.scheduled_time)) {
+      setScheduleError('Preencha tipo. Horario e obrigatorio exceto Banheiro.')
       return
     }
     setScheduleError('')
     setScheduleBusy(true)
     try {
+      const scheduledTime = needsTime
+        ? agentModalScheduleForm.scheduled_time
+        : agentModalScheduleForm.scheduled_time || null
       await upsertPauseSchedule({
         agent_id: agentModalId,
         pause_type_id: agentModalScheduleForm.pause_type_id,
-        scheduled_time: agentModalScheduleForm.scheduled_time,
+        scheduled_time: scheduledTime,
         duration_minutes: timeToMinutes(agentModalScheduleForm.duration_time)
       })
       setAgentModalScheduleForm((prev) => ({ ...prev, scheduled_time: '', duration_time: '' }))
