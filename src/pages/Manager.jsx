@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+﻿import { useEffect, useMemo, useState } from 'react'
 import TopNav from '../components/TopNav'
 import StatCard from '../components/StatCard'
 import { listDashboard, getPauseTypes, listPauseSchedules, upsertPauseSchedule, deletePauseSchedule, listActivePauses } from '../services/apiPauses'
-import { listAgents, listSectors } from '../services/apiAdmin'
+import { listAgents, listManagerSectors, listSectors } from '../services/apiAdmin'
 import { listAgentLogins, listAgentLoginHistory, listActiveAgentSessions } from '../services/apiSessions'
 import { exportCsv, exportPdf, exportXlsx } from '../utils/export'
 import { formatDuration, formatInputDate, startOfMonth, startOfToday, startOfWeek } from '../utils/format'
@@ -75,7 +75,17 @@ export default function Manager() {
     scheduled_time: '',
     duration_time: ''
   })
-  const [expandedAgentId, setExpandedAgentId] = useState('')
+  const [managerSectorIds, setManagerSectorIds] = useState([])
+  const [expandedSectorId, setExpandedSectorId] = useState('')
+  const [scheduleView, setScheduleView] = useState('sectors')
+  const [agentModalOpen, setAgentModalOpen] = useState(false)
+  const [agentModalId, setAgentModalId] = useState('')
+  const [agentModalName, setAgentModalName] = useState('')
+  const [agentModalScheduleForm, setAgentModalScheduleForm] = useState({
+    pause_type_id: '',
+    scheduled_time: '',
+    duration_time: ''
+  })
 
   const resetFilters = () => {
     setPeriod('week')
@@ -155,16 +165,30 @@ export default function Manager() {
   }
 
   useEffect(() => {
+    if (!profile?.id) return
     const init = async () => {
       try {
-        const [agentsData, typesData, sectorsData] = await Promise.all([
-          listAgents(),
-          getPauseTypes(false),
-          isAdmin ? listSectors() : listSectors()
-        ])
+        const requests = [listAgents(), getPauseTypes(false), listSectors()]
+        if (!isAdmin) requests.push(listManagerSectors())
+        const results = await Promise.all(requests)
+        const agentsData = results[0]
+        const typesData = results[1]
+        const sectorsData = results[2]
+        const managerSectorsData = results[3] || []
+
         setAgents(agentsData)
         setPauseTypes(typesData)
+
         setSectors(sectorsData)
+        if (isAdmin) {
+          setManagerSectorIds([])
+        } else {
+          const linkedIds = managerSectorsData
+            .filter((row) => row.manager_id === profile.id)
+            .map((row) => row.sector_id)
+          setManagerSectorIds(linkedIds)
+        }
+
         await loadSchedules()
         await Promise.all([loadActiveSessions(), loadActivePauses()])
       } catch (err) {
@@ -172,7 +196,7 @@ export default function Manager() {
       }
     }
     init()
-  }, [isAdmin])
+  }, [isAdmin, profile?.id])
 
   useEffect(() => {
     if (!profile?.id) return
@@ -234,7 +258,7 @@ export default function Manager() {
         to: toDate,
         agentId: agentId || null,
         pauseTypeId: pauseTypeId || null,
-        sectorId: isAdmin ? sectorId || null : null
+        sectorId: sectorId || null
       })
       setDashboard(data || [])
     } catch (err) {
@@ -377,6 +401,35 @@ export default function Manager() {
     return map
   }, [pauseSchedules])
 
+  const agentsBySector = useMemo(() => {
+    const map = {}
+    agents.forEach((agent) => {
+      if (!agent.team_id) return
+      if (!map[agent.team_id]) map[agent.team_id] = []
+      map[agent.team_id].push(agent)
+    })
+    Object.values(map).forEach((list) => {
+      list.sort((a, b) => (a.full_name || '').localeCompare(b.full_name || ''))
+    })
+    return map
+  }, [agents])
+
+  const scopedSectors = useMemo(() => {
+    if (isAdmin) return sectors
+    return sectors.filter((sector) => managerSectorIds.includes(sector.id))
+  }, [isAdmin, sectors, managerSectorIds])
+
+  useEffect(() => {
+    if (sectorId && !scopedSectors.find((sector) => sector.id === sectorId)) {
+      setSectorId('')
+    }
+  }, [scopedSectors, sectorId])
+
+  const visibleSectors = useMemo(() => {
+    const sectorIds = new Set(Object.keys(agentsBySector))
+    return scopedSectors.filter((sector) => sectorIds.has(sector.id))
+  }, [scopedSectors, agentsBySector])
+
   const sectorById = useMemo(() => {
     const map = new Map()
     sectors.forEach((sector) => {
@@ -488,6 +541,47 @@ export default function Manager() {
     setPauseSchedules((prev) =>
       prev.map((schedule) => (schedule.id === id ? { ...schedule, [field]: value } : schedule))
     )
+  }
+
+  const openAgentModal = (agent) => {
+    setAgentModalId(agent.id)
+    setAgentModalName(agent.full_name || '')
+    setAgentModalScheduleForm({
+      pause_type_id: pauseTypes?.[0]?.id || '',
+      scheduled_time: '',
+      duration_time: ''
+    })
+    setAgentModalOpen(true)
+  }
+
+  const closeAgentModal = () => {
+    setAgentModalOpen(false)
+    setAgentModalId('')
+    setAgentModalName('')
+  }
+
+  const addAgentSchedule = async () => {
+    if (!agentModalId) return
+    if (!agentModalScheduleForm.pause_type_id || !agentModalScheduleForm.scheduled_time) {
+      setScheduleError('Preencha tipo e horario da pausa.')
+      return
+    }
+    setScheduleError('')
+    setScheduleBusy(true)
+    try {
+      await upsertPauseSchedule({
+        agent_id: agentModalId,
+        pause_type_id: agentModalScheduleForm.pause_type_id,
+        scheduled_time: agentModalScheduleForm.scheduled_time,
+        duration_minutes: timeToMinutes(agentModalScheduleForm.duration_time)
+      })
+      setAgentModalScheduleForm((prev) => ({ ...prev, scheduled_time: '', duration_time: '' }))
+      await loadSchedules()
+    } catch (err) {
+      setScheduleError(err.message || 'Falha ao adicionar pausa')
+    } finally {
+      setScheduleBusy(false)
+    }
   }
 
   return (
@@ -816,12 +910,12 @@ export default function Manager() {
                 ))}
               </select>
             </div>
-            {isAdmin ? (
+            {scopedSectors.length ? (
               <div>
                 <label className="label">Setor</label>
                 <select className="input mt-1" value={sectorId} onChange={(e) => setSectorId(e.target.value)}>
                   <option value="">Todos</option>
-                  {sectors.map((sector) => (
+                  {scopedSectors.map((sector) => (
                     <option key={sector.id} value={sector.id}>
                       {sector.label}
                     </option>
@@ -903,108 +997,96 @@ export default function Manager() {
           </div>
 
           <div className="card">
-            <h2 className="font-display text-xl font-semibold text-slate-900">Agenda atual</h2>
-            <p className="text-sm text-slate-600 mt-1">
-              Para mudar agente ou tipo, remova e crie novamente.
-            </p>
-            <div className="mt-4 space-y-3">
-              {sortedAgents.map((agent) => {
-                const items = schedulesByAgent.get(agent.id) || []
-                const isOpen = expandedAgentId === agent.id
-                const sectorLabel = sectorById.get(agent.team_id) || 'Sem setor'
-                return (
-                  <div key={agent.id} className="rounded-xl border border-slate-200">
-                    <button
-                      type="button"
-                      className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
-                      onClick={() => setExpandedAgentId(isOpen ? '' : agent.id)}
-                    >
-                      <div>
-                        <p className="text-sm font-semibold text-slate-900">{agent.full_name}</p>
-                        <p className="text-xs text-slate-500">
-                          {sectorLabel} • {items.length} pausas registradas
-                        </p>
-                      </div>
-                      <span className="text-xs text-slate-500">{isOpen ? 'Fechar' : 'Ver pausas'}</span>
-                    </button>
-                    {isOpen ? (
-                      <div className="border-t border-slate-100 px-3 pb-3 pt-2">
-                        {items.length ? (
-                          <div className="overflow-x-auto">
-                            <table className="min-w-full text-sm">
-                              <thead className="text-slate-500">
-                                <tr>
-                                  <th className="text-left py-2">Tipo</th>
-                                  <th className="text-left py-2">Horario</th>
-                                  <th className="text-left py-2">Duracao</th>
-                                  <th className="text-left py-2">Acoes</th>
-                                </tr>
-                              </thead>
-                              <tbody className="text-slate-900">
-                                {items.map((schedule) => (
-                                  <tr key={schedule.id} className="border-t border-slate-100">
-                                    <td className="py-2">{schedule.pause_types?.label || '-'}</td>
-                                    <td className="py-2">
-                                      <input
-                                        className="input"
-                                        type="time"
-                                        step="60"
-                                        value={normalizeTime(schedule.scheduled_time)}
-                                        onChange={(e) =>
-                                          updateScheduleField(schedule.id, 'scheduled_time', e.target.value)
-                                        }
-                                      />
-                                    </td>
-                                    <td className="py-2">
-                                      <input
-                                        className="input"
-                                        type="time"
-                                        step="60"
-                                        value={minutesToTime(schedule.duration_minutes)}
-                                        onChange={(e) =>
-                                          updateScheduleField(
-                                            schedule.id,
-                                            'duration_minutes',
-                                            timeToMinutes(e.target.value)
-                                          )
-                                        }
-                                      />
-                                    </td>
-                                    <td className="py-2">
-                                      <div className="flex gap-2">
-                                        <button
-                                          className="btn-ghost"
-                                          type="button"
-                                          onClick={() => handleScheduleUpdate(schedule)}
-                                          disabled={scheduleBusy}
-                                        >
-                                          Salvar
-                                        </button>
-                                        <button
-                                          className="btn-ghost text-red-600"
-                                          type="button"
-                                          onClick={() => handleScheduleDelete(schedule)}
-                                          disabled={scheduleBusy}
-                                        >
-                                          Remover
-                                        </button>
-                                      </div>
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        ) : (
-                          <p className="text-sm text-slate-500">Nenhuma pausa programada.</p>
-                        )}
-                      </div>
-                    ) : null}
-                  </div>
-                )
-              })}
-              {!agents.length ? <p className="text-sm text-slate-500">Nenhum agente encontrado.</p> : null}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="font-display text-xl font-semibold text-slate-900">Agenda atual</h2>
+                <p className="text-sm text-slate-600 mt-1">
+                  Clique no agente para editar as pausas cadastradas.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className={`btn ${scheduleView === 'agents' ? 'bg-brand-600 text-white' : 'btn-ghost'}`}
+                  onClick={() => setScheduleView('agents')}
+                >
+                  Agentes
+                </button>
+                <button
+                  type="button"
+                  className={`btn ${scheduleView === 'sectors' ? 'bg-brand-600 text-white' : 'btn-ghost'}`}
+                  onClick={() => setScheduleView('sectors')}
+                >
+                  Setores
+                </button>
+              </div>
             </div>
+
+            {scheduleView === 'agents' ? (
+              <div className="mt-4 space-y-3">
+                {sortedAgents.map((agent) => {
+                  const items = schedulesByAgent.get(agent.id) || []
+                  const sectorLabel = sectorById.get(agent.team_id) || 'Sem setor'
+                  return (
+                    <button
+                      key={agent.id}
+                      type="button"
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-left transition hover:bg-slate-50"
+                      onClick={() => openAgentModal(agent)}
+                    >
+                      <p className="text-sm font-semibold text-slate-900">{agent.full_name}</p>
+                      <p className="text-xs text-slate-500">
+                        {sectorLabel} • {items.length} pausas registradas
+                      </p>
+                    </button>
+                  )
+                })}
+                {!agents.length ? <p className="text-sm text-slate-500">Nenhum agente encontrado.</p> : null}
+              </div>
+            ) : (
+              <div className="mt-4 space-y-2">
+                {visibleSectors.map((sector) => {
+                  const items = agentsBySector[sector.id] || []
+                  const isOpen = expandedSectorId === sector.id
+                  return (
+                    <div key={sector.id} className="rounded-xl border border-slate-200">
+                      <button
+                        type="button"
+                        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
+                        onClick={() => setExpandedSectorId(isOpen ? '' : sector.id)}
+                      >
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">{sector.label}</p>
+                          <p className="text-xs text-slate-500">{items.length} agentes</p>
+                        </div>
+                        <span className="text-xs text-slate-500">{isOpen ? 'Fechar' : 'Ver agentes'}</span>
+                      </button>
+                      {isOpen ? (
+                        <div className="border-t border-slate-100 px-3 pb-3 pt-2">
+                          {items.length ? (
+                            <div className="space-y-2">
+                              {items.map((agent) => (
+                                <button
+                                  key={agent.id}
+                                  type="button"
+                                  className="flex w-full items-center justify-between rounded-lg border border-slate-100 px-3 py-2 text-left hover:bg-slate-50"
+                                  onClick={() => openAgentModal(agent)}
+                                >
+                                  <span className="text-sm text-slate-900">{agent.full_name}</span>
+                                </button>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-sm text-slate-500">Nenhum agente neste setor.</p>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  )
+                })}
+                {!visibleSectors.length ? <p className="text-sm text-slate-500">Nenhum setor encontrado.</p> : null}
+              </div>
+            )}
           </div>
         </div>
         ) : null}
@@ -1079,6 +1161,155 @@ export default function Manager() {
         )}
       </div>
 
+      {agentModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-6">
+          <div className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
+            <div className="flex items-center justify-between gap-4">
+              <h3 className="font-display text-lg font-semibold text-slate-900">
+                Pausas do agente {agentModalName || ''}
+              </h3>
+              <button type="button" className="btn-ghost" onClick={closeAgentModal}>
+                Fechar
+              </button>
+            </div>
+
+            <div className="mt-4">
+              <h4 className="text-sm font-semibold text-slate-800">Pausas registradas</h4>
+              <div className="mt-3 overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead className="text-slate-500">
+                    <tr>
+                      <th className="text-left py-2">Tipo</th>
+                      <th className="text-left py-2">Horario</th>
+                      <th className="text-left py-2">Duracao</th>
+                      <th className="text-left py-2">Acoes</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-slate-900">
+                    {pauseSchedules
+                      .filter((schedule) => schedule.agent_id === agentModalId)
+                      .map((schedule) => (
+                        <tr key={schedule.id} className="border-t border-slate-100">
+                          <td className="py-2">{schedule.pause_types?.label || '-'}</td>
+                          <td className="py-2">
+                            <input
+                              className="input"
+                              type="time"
+                              step="60"
+                              value={normalizeTime(schedule.scheduled_time)}
+                              onChange={(e) =>
+                                updateScheduleField(schedule.id, 'scheduled_time', e.target.value)
+                              }
+                            />
+                          </td>
+                          <td className="py-2">
+                            <input
+                              className="input"
+                              type="time"
+                              step="60"
+                              value={minutesToTime(schedule.duration_minutes)}
+                              onChange={(e) =>
+                                updateScheduleField(
+                                  schedule.id,
+                                  'duration_minutes',
+                                  timeToMinutes(e.target.value)
+                                )
+                              }
+                            />
+                          </td>
+                          <td className="py-2">
+                            <div className="flex gap-2">
+                              <button
+                                className="btn-ghost"
+                                type="button"
+                                onClick={() => handleScheduleUpdate(schedule)}
+                                disabled={scheduleBusy}
+                              >
+                                Salvar
+                              </button>
+                              <button
+                                className="btn-ghost text-red-600"
+                                type="button"
+                                onClick={() => {
+                                  const confirmed = window.confirm('Remover esta pausa?')
+                                  if (!confirmed) return
+                                  handleScheduleDelete(schedule)
+                                }}
+                                disabled={scheduleBusy}
+                              >
+                                Remover
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    {!pauseSchedules.filter((schedule) => schedule.agent_id === agentModalId).length ? (
+                      <tr>
+                        <td className="py-3 text-slate-500" colSpan="4">
+                          Nenhuma pausa cadastrada.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <h4 className="text-sm font-semibold text-slate-800">Adicionar pausa</h4>
+              <div className="mt-3 grid gap-3 md:grid-cols-3">
+                <div>
+                  <label className="label">Tipo</label>
+                  <select
+                    className="input mt-1"
+                    value={agentModalScheduleForm.pause_type_id}
+                    onChange={(e) =>
+                      setAgentModalScheduleForm((prev) => ({ ...prev, pause_type_id: e.target.value }))
+                    }
+                  >
+                    <option value="">Selecione</option>
+                    {pauseTypes.map((type) => (
+                      <option key={type.id} value={type.id}>
+                        {type.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="label">Horario</label>
+                  <input
+                    className="input mt-1"
+                    type="time"
+                    step="60"
+                    value={agentModalScheduleForm.scheduled_time}
+                    onChange={(e) =>
+                      setAgentModalScheduleForm((prev) => ({ ...prev, scheduled_time: e.target.value }))
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="label">Duracao (hh:mm)</label>
+                  <input
+                    className="input mt-1"
+                    type="time"
+                    step="60"
+                    value={agentModalScheduleForm.duration_time}
+                    onChange={(e) =>
+                      setAgentModalScheduleForm((prev) => ({ ...prev, duration_time: e.target.value }))
+                    }
+                  />
+                </div>
+              </div>
+              <div className="mt-3 flex justify-end">
+                <button type="button" className="btn-ghost" onClick={addAgentSchedule}>
+                  Adicionar pausa
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <Modal open={agentsModalOpen} title="Agentes vinculados" onClose={() => setAgentsModalOpen(false)}>
         {agents.length ? (
           <div className="space-y-2">
@@ -1147,3 +1378,4 @@ export default function Manager() {
     </div>
   )
 }
+
