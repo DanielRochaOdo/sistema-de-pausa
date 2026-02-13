@@ -80,7 +80,13 @@ export default function Admin() {
   const [success, setSuccess] = useState('')
   const [busy, setBusy] = useState(false)
   const [userSortDir, setUserSortDir] = useState('asc')
-  const [newType, setNewType] = useState({ code: '', label: '', limit_time: '' })
+  const [newType, setNewType] = useState({
+    code: '',
+    label: '',
+    limit_time: '',
+    tolerance_start_time: '',
+    tolerance_end_time: ''
+  })
   const [newSector, setNewSector] = useState({ code: '', label: '' })
   const [scheduleForm, setScheduleForm] = useState({
     agent_id: '',
@@ -340,7 +346,9 @@ export default function Admin() {
       await updatePauseType(type.id, {
         label: type.label,
         is_active: type.is_active,
-        limit_minutes: type.limit_minutes ?? null
+        limit_minutes: type.limit_minutes ?? null,
+        tolerance_start_minutes: type.tolerance_start_minutes ?? null,
+        tolerance_end_minutes: type.tolerance_end_minutes ?? null
       })
       setSuccess('Tipo atualizado.')
       await refreshAll()
@@ -375,12 +383,22 @@ export default function Admin() {
     setBusy(true)
     try {
       const limitMinutes = timeToMinutes(newType.limit_time)
+      const toleranceStartMinutes = timeToMinutes(newType.tolerance_start_time)
+      const toleranceEndMinutes = timeToMinutes(newType.tolerance_end_time)
       await createPauseType({
         code: newType.code,
         label: newType.label,
-        limit_minutes: limitMinutes
+        limit_minutes: limitMinutes,
+        tolerance_start_minutes: toleranceStartMinutes,
+        tolerance_end_minutes: toleranceEndMinutes
       })
-      setNewType({ code: '', label: '', limit_time: '' })
+      setNewType({
+        code: '',
+        label: '',
+        limit_time: '',
+        tolerance_start_time: '',
+        tolerance_end_time: ''
+      })
       setSuccess('Tipo criado.')
       await refreshAll()
     } catch (err) {
@@ -1966,6 +1984,26 @@ export default function Admin() {
                     onChange={(e) => setNewType({ ...newType, limit_time: e.target.value })}
                   />
                 </div>
+                <div>
+                  <label className="label">Tolerancia inicio (hh:mm)</label>
+                  <input
+                    className="input mt-1"
+                    type="time"
+                    step="60"
+                    value={newType.tolerance_start_time}
+                    onChange={(e) => setNewType({ ...newType, tolerance_start_time: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="label">Tolerancia fim (hh:mm)</label>
+                  <input
+                    className="input mt-1"
+                    type="time"
+                    step="60"
+                    value={newType.tolerance_end_time}
+                    onChange={(e) => setNewType({ ...newType, tolerance_end_time: e.target.value })}
+                  />
+                </div>
                 <button className="btn-primary w-full" type="button" onClick={handleTypeCreate} disabled={busy}>
                   {busy ? 'Salvando...' : 'Criar tipo'}
                 </button>
@@ -1980,6 +2018,8 @@ export default function Admin() {
                       <th className="text-left py-2">Codigo</th>
                       <th className="text-left py-2">Label</th>
                       <th className="text-left py-2">Tempo limite</th>
+                      <th className="text-left py-2">Tol. inicio</th>
+                      <th className="text-left py-2">Tol. fim</th>
                       <th className="text-left py-2">Ativo</th>
                       <th className="text-left py-2">Acoes</th>
                     </tr>
@@ -2003,6 +2043,36 @@ export default function Admin() {
                             value={minutesToTime(type.limit_minutes)}
                             onChange={(e) =>
                               updateTypeField(type.id, 'limit_minutes', timeToMinutes(e.target.value))
+                            }
+                          />
+                        </td>
+                        <td className="py-2">
+                          <input
+                            className="input"
+                            type="time"
+                            step="60"
+                            value={minutesToTime(type.tolerance_start_minutes)}
+                            onChange={(e) =>
+                              updateTypeField(
+                                type.id,
+                                'tolerance_start_minutes',
+                                timeToMinutes(e.target.value)
+                              )
+                            }
+                          />
+                        </td>
+                        <td className="py-2">
+                          <input
+                            className="input"
+                            type="time"
+                            step="60"
+                            value={minutesToTime(type.tolerance_end_minutes)}
+                            onChange={(e) =>
+                              updateTypeField(
+                                type.id,
+                                'tolerance_end_minutes',
+                                timeToMinutes(e.target.value)
+                              )
                             }
                           />
                         </td>
@@ -2038,7 +2108,7 @@ export default function Admin() {
                     ))}
                     {!pauseTypes.length ? (
                       <tr>
-                        <td className="py-3 text-slate-500" colSpan="5">
+                        <td className="py-3 text-slate-500" colSpan="7">
                           Nenhum tipo cadastrado.
                         </td>
                       </tr>

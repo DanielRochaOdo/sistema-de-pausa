@@ -14,7 +14,7 @@ export async function fetchPauses(filters) {
   let query = supabase
     .from('pauses')
     .select(
-      'id, started_at, ended_at, duration_seconds, notes, atraso, pause_types(code,label,limit_minutes), profiles!pauses_agent_id_fkey(full_name, team_id)'
+      'id, agent_id, pause_type_id, started_at, ended_at, duration_seconds, atraso, pause_types(code,label,limit_minutes,tolerance_start_minutes,tolerance_end_minutes), profiles!pauses_agent_id_fkey(full_name, team_id)'
     )
     .gte('started_at', fromDate.toISOString())
     .lt('started_at', toDate.toISOString())

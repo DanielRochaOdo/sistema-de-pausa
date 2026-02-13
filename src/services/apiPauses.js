@@ -11,7 +11,7 @@ export async function getPauseTypes(onlyActive = true) {
 export async function getActivePause(agentId) {
   const { data, error } = await supabase
     .from('pauses')
-    .select('id, started_at, notes, pause_type_id, pause_types(code,label)')
+    .select('id, started_at, pause_type_id, pause_types(code,label)')
     .eq('agent_id', agentId)
     .is('ended_at', null)
     .maybeSingle()
@@ -24,7 +24,7 @@ export async function listRecentPauses(agentId, days = 7) {
   fromDate.setDate(fromDate.getDate() - days)
   const { data, error } = await supabase
     .from('pauses')
-    .select('id, started_at, ended_at, duration_seconds, notes, pause_types(code,label)')
+    .select('id, started_at, ended_at, duration_seconds, pause_types(code,label)')
     .eq('agent_id', agentId)
     .gte('started_at', fromDate.toISOString())
     .order('started_at', { ascending: false })
@@ -38,8 +38,8 @@ export async function startPause(pauseCode) {
   return data
 }
 
-export async function endPause(notes) {
-  const { data, error } = await supabase.rpc('end_pause', { p_notes: notes ?? null })
+export async function endPause() {
+  const { data, error } = await supabase.rpc('end_pause', { p_notes: null })
   if (error) throw error
   return data
 }

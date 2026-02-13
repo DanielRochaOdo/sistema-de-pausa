@@ -19,7 +19,6 @@ export default function Agent() {
   const [activePause, setActivePause] = useState(null)
   const [recentPauses, setRecentPauses] = useState([])
   const [pauseSchedules, setPauseSchedules] = useState([])
-  const [notes, setNotes] = useState('')
   const [error, setError] = useState('')
   const [scheduleError, setScheduleError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -134,8 +133,7 @@ export default function Agent() {
     setError('')
     setEnding(true)
     try {
-      await endPause(notes)
-      setNotes('')
+      await endPause()
       await loadAll()
     } catch (err) {
       setError(friendlyError(err, 'Nao foi possivel encerrar a pausa'))
@@ -179,12 +177,6 @@ export default function Agent() {
               </div>
             ) : (
               <div className="flex items-center gap-2">
-                <input
-                  className="input h-10 min-w-[200px]"
-                  value={notes}
-                  onChange={(event) => setNotes(event.target.value)}
-                  placeholder="Notas (opcional)"
-                />
                 <button className="btn-secondary h-10 whitespace-nowrap" onClick={handleEnd} disabled={ending}>
                   {ending ? 'Encerrando...' : 'Encerrar pausa'}
                 </button>
@@ -293,14 +285,8 @@ export default function Agent() {
               <p className="mt-2 text-5xl font-semibold">{formatDuration(elapsedSeconds)}</p>
             </div>
             <div className="mt-6">
-              <label className="text-xs uppercase tracking-[0.2em] text-white/70">Observacao</label>
-              <textarea
-                className="mt-2 w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm text-white placeholder-white/50"
-                rows={3}
-                value={notes}
-                onChange={(event) => setNotes(event.target.value)}
-                placeholder="Escreva uma observacao (opcional)"
-              />
+              <p className="text-xs uppercase tracking-[0.2em] text-white/70">Pausa em andamento</p>
+              <p className="mt-2 text-sm text-white/70">Finalize a pausa quando concluir.</p>
             </div>
             <div className="mt-6 flex justify-center">
               <button

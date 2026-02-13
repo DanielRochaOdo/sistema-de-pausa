@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import TopNav from '../components/TopNav'
 import { fetchPauses } from '../services/apiReports'
 import { listAgents, listSectors } from '../services/apiAdmin'
-import { getPauseTypes } from '../services/apiPauses'
+import { getPauseTypes, listPauseSchedules } from '../services/apiPauses'
 import { exportCsv, exportPdf, exportXlsx } from '../utils/export'
 import { formatDateTime, formatDuration, formatInputDate, startOfMonth } from '../utils/format'
 
@@ -10,6 +10,7 @@ export default function Reports() {
   const [agents, setAgents] = useState([])
   const [pauseTypes, setPauseTypes] = useState([])
   const [sectors, setSectors] = useState([])
+  const [pauseSchedules, setPauseSchedules] = useState([])
   const [fromDate, setFromDate] = useState(formatInputDate(startOfMonth()))
   const [toDate, setToDate] = useState(formatInputDate(new Date()))
   const [agentId, setAgentId] = useState('')
@@ -32,14 +33,16 @@ export default function Reports() {
   useEffect(() => {
     const init = async () => {
       try {
-        const [agentsData, typesData, sectorsData] = await Promise.all([
+        const [agentsData, typesData, sectorsData, schedulesData] = await Promise.all([
           listAgents(),
           getPauseTypes(false),
-          listSectors()
+          listSectors(),
+          listPauseSchedules()
         ])
         setAgents(agentsData)
         setPauseTypes(typesData)
         setSectors(sectorsData)
+        setPauseSchedules(schedulesData || [])
       } catch (err) {
         console.error(err)
       }
@@ -78,10 +81,64 @@ export default function Reports() {
     return `${hours}:${mins}`
   }
 
+  const scheduleMinutesByKey = useMemo(() => {
+    const map = new Map()
+    ;(pauseSchedules || []).forEach((schedule) => {
+      const key = `${schedule.agent_id}:${schedule.pause_type_id}`
+      const time = schedule.scheduled_time
+      if (!time) return
+      const [h, m] = String(time).split(':').map(Number)
+      if (Number.isNaN(h) || Number.isNaN(m)) return
+      const minutes = h * 60 + m
+      if (!map.has(key)) map.set(key, [])
+      map.get(key).push(minutes)
+    })
+    map.forEach((list) => list.sort((a, b) => a - b))
+    return map
+  }, [pauseSchedules])
+
+  const getToleranceStatus = (row) => {
+    if (row.atraso) return 'Atraso'
+    const tolStart = row.pause_types?.tolerance_start_minutes ?? null
+    const tolEnd = row.pause_types?.tolerance_end_minutes ?? null
+    if ((!tolStart || tolStart <= 0) && (!tolEnd || tolEnd <= 0)) return 'OK'
+
+    const key = `${row.agent_id}:${row.pause_type_id}`
+    const scheduleMinutes = scheduleMinutesByKey.get(key) || []
+    if (!scheduleMinutes.length) return 'OK'
+
+    const toMinutesOfDay = (value) => {
+      if (!value) return null
+      const date = new Date(value)
+      return date.getHours() * 60 + date.getMinutes()
+    }
+
+    const minDiff = (minutes) => {
+      if (minutes === null) return null
+      let best = null
+      scheduleMinutes.forEach((scheduleMinute) => {
+        const diff = Math.abs(minutes - scheduleMinute)
+        if (best === null || diff < best) best = diff
+      })
+      return best
+    }
+
+    const startDiff = minDiff(toMinutesOfDay(row.started_at))
+    const endDiff = minDiff(toMinutesOfDay(row.ended_at))
+    const withinStart = tolStart && startDiff !== null && startDiff <= tolStart
+    const withinEnd = tolEnd && endDiff !== null && endDiff <= tolEnd
+    if (withinStart || withinEnd) return 'Tolerancia'
+    return 'OK'
+  }
+
+  const rowsWithStatus = useMemo(() => {
+    return rows.map((row) => ({ ...row, status: getToleranceStatus(row) }))
+  }, [rows, scheduleMinutesByKey])
+
   const handleExport = (format) => {
-    if (!rows.length) return
+    if (!rowsWithStatus.length) return
     const sectorMap = new Map(sectors.map((sector) => [sector.id, sector.label]))
-    const mapped = rows.map((row) => ({
+    const mapped = rowsWithStatus.map((row) => ({
       agente: row.profiles?.full_name,
       setor: sectorMap.get(row.profiles?.team_id) || '',
       tipo: row.pause_types?.label,
@@ -89,8 +146,7 @@ export default function Reports() {
       inicio: formatDateTime(row.started_at),
       fim: formatDateTime(row.ended_at),
       duracao: formatDuration(row.duration_seconds || 0),
-      atraso: row.atraso ? 'Sim' : 'Nao',
-      notas: row.notes || ''
+      atraso: row.status === 'Atraso' ? 'Atraso' : row.status === 'Tolerancia' ? 'Tolerancia' : 'Nao'
     }))
 
     const baseName = `relatorio-pausas-${fromDate}-a-${toDate}`
@@ -163,7 +219,7 @@ export default function Reports() {
                 <button
                   className="btn-primary w-full"
                   onClick={() => setExportOpen((prev) => !prev)}
-                  disabled={!rows.length || loading}
+                  disabled={!rowsWithStatus.length || loading}
                 >
                   Exportar
                 </button>
@@ -188,7 +244,7 @@ export default function Reports() {
         <div className="card">
           <div className="flex items-center justify-between">
             <h3 className="font-display text-lg font-semibold text-slate-900">Preview</h3>
-            <span className="text-sm text-slate-500">{rows.length} registros</span>
+            <span className="text-sm text-slate-500">{rowsWithStatus.length} registros</span>
           </div>
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-full text-sm">
@@ -202,16 +258,22 @@ export default function Reports() {
                 </tr>
               </thead>
               <tbody className="text-slate-900">
-                {rows.map((row) => (
+                {rowsWithStatus.map((row) => (
                   <tr
                     key={row.id}
-                    className={`border-t border-slate-100 ${row.atraso ? 'bg-amber-50' : ''}`}
+                    className={`border-t border-slate-100 ${row.status === 'Atraso' ? 'bg-amber-50' : row.status === 'Tolerancia' ? 'bg-blue-50' : ''}`}
                   >
                     <td className="py-2">{row.profiles?.full_name}</td>
                     <td className="py-2">
                       <div className="flex items-center gap-2">
                         <span>{row.pause_types?.label}</span>
-                        {row.atraso ? <span className="chip bg-amber-100 text-amber-700">Atraso</span> : null}
+                        {row.status !== 'OK' ? (
+                          <span
+                            className={`chip ${row.status === 'Atraso' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}
+                          >
+                            {row.status === 'Atraso' ? 'Atraso' : 'Tolerancia'}
+                          </span>
+                        ) : null}
                       </div>
                     </td>
                     <td className="py-2">{formatDateTime(row.started_at)}</td>
@@ -219,7 +281,7 @@ export default function Reports() {
                     <td className="py-2">{formatDuration(row.duration_seconds || 0)}</td>
                   </tr>
                 ))}
-                {!rows.length ? (
+                {!rowsWithStatus.length ? (
                   <tr>
                     <td className="py-3 text-slate-500" colSpan="5">
                       Nenhum registro encontrado.

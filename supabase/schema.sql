@@ -43,7 +43,9 @@ create table if not exists public.pause_types (
   code text unique not null,
   label text not null,
   is_active boolean default true,
-  limit_minutes int null
+  limit_minutes int null,
+  tolerance_start_minutes int null,
+  tolerance_end_minutes int null
 );
 
 create table if not exists public.pauses (
