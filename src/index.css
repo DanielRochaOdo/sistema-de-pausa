@@ -8,6 +8,10 @@
   color-scheme: light;
 }
 
+.theme-dark {
+  color-scheme: dark;
+}
+
 body {
   @apply font-sans text-slate-900;
   background: radial-gradient(1200px 600px at 10% 10%, #eef8f6, transparent 60%),
@@ -52,4 +56,114 @@ body {
   .chip {
     @apply inline-flex items-center rounded-full bg-slate-900 text-white px-3 py-1 text-xs font-medium;
   }
+}
+
+.theme-dark body {
+  color: #e2e8f0;
+  background: radial-gradient(1200px 600px at 10% 10%, rgba(19, 111, 103, 0.25), transparent 60%),
+    radial-gradient(1000px 600px at 90% 0%, rgba(30, 58, 138, 0.25), transparent 55%),
+    linear-gradient(180deg, #0b1220 0%, #0f172a 100%);
+}
+
+.theme-dark .card {
+  background: rgba(15, 23, 42, 0.85);
+  border-color: rgba(148, 163, 184, 0.2);
+  box-shadow: 0 25px 50px -20px rgba(0, 0, 0, 0.6);
+}
+
+.theme-dark .btn-secondary {
+  background-color: #e2e8f0;
+  color: #0f172a;
+}
+
+.theme-dark .btn-secondary:hover {
+  background-color: #f8fafc;
+}
+
+.theme-dark .btn-ghost {
+  border-color: #334155;
+  background-color: rgba(15, 23, 42, 0.6);
+}
+
+.theme-dark .btn-ghost:hover {
+  background-color: rgba(30, 41, 59, 0.75);
+}
+
+.theme-dark .input {
+  background-color: #0f172a;
+  border-color: #334155;
+  color: #e2e8f0;
+}
+
+.theme-dark .label {
+  color: #cbd5e1;
+}
+
+.theme-dark .chip {
+  background-color: #1e293b;
+  color: #e2e8f0;
+}
+
+.theme-dark .text-slate-900 {
+  color: #f8fafc;
+}
+
+.theme-dark .text-slate-800 {
+  color: #f1f5f9;
+}
+
+.theme-dark .text-slate-700 {
+  color: #e2e8f0;
+}
+
+.theme-dark .text-slate-600 {
+  color: #cbd5e1;
+}
+
+.theme-dark .text-slate-500 {
+  color: #94a3b8;
+}
+
+.theme-dark .bg-white {
+  background-color: #0f172a;
+}
+
+.theme-dark .bg-white\/80 {
+  background-color: rgba(15, 23, 42, 0.8);
+}
+
+.theme-dark .bg-slate-50 {
+  background-color: #0b1220;
+}
+
+.theme-dark .bg-red-50 {
+  background-color: rgba(127, 29, 29, 0.25);
+}
+
+.theme-dark .bg-amber-50 {
+  background-color: rgba(120, 53, 15, 0.25);
+}
+
+.theme-dark .bg-amber-100 {
+  background-color: rgba(120, 53, 15, 0.4);
+}
+
+.theme-dark .bg-blue-50 {
+  background-color: rgba(30, 58, 138, 0.25);
+}
+
+.theme-dark .bg-blue-100 {
+  background-color: rgba(30, 58, 138, 0.4);
+}
+
+.theme-dark .bg-emerald-50 {
+  background-color: rgba(6, 78, 59, 0.25);
+}
+
+.theme-dark .border-slate-100 {
+  border-color: rgba(148, 163, 184, 0.15);
+}
+
+.theme-dark .border-slate-200 {
+  border-color: rgba(148, 163, 184, 0.25);
 }

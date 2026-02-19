@@ -4,6 +4,23 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import './index.css'
 
+const applyInitialTheme = () => {
+  if (typeof window === 'undefined') return
+  let storedTheme = null
+  try {
+    storedTheme = localStorage.getItem('theme')
+  } catch (err) {
+    storedTheme = null
+  }
+  const prefersDark = window.matchMedia
+    ? window.matchMedia('(prefers-color-scheme: dark)').matches
+    : false
+  const useDark = storedTheme ? storedTheme === 'dark' : prefersDark
+  document.documentElement.classList.toggle('theme-dark', useDark)
+}
+
+applyInitialTheme()
+
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <BrowserRouter>

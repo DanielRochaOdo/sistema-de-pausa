@@ -14,6 +14,10 @@ export default function TopNav({ agentControls }) {
   const [activeLatePauses, setActiveLatePauses] = useState([])
   const prevTotalLateRef = useRef(0)
   const prevActiveLateIdsRef = useRef(new Set())
+  const [isDark, setIsDark] = useState(() => {
+    if (typeof document === 'undefined') return false
+    return document.documentElement.classList.contains('theme-dark')
+  })
 
   const showAgent = profile?.role === 'AGENTE'
   const showManager = profile?.role === 'GERENTE' || profile?.role === 'ADMIN'
@@ -171,6 +175,21 @@ export default function TopNav({ agentControls }) {
     }
   }
 
+  const handleToggleTheme = () => {
+    setIsDark((prev) => {
+      const next = !prev
+      if (typeof document !== 'undefined') {
+        document.documentElement.classList.toggle('theme-dark', next)
+      }
+      try {
+        localStorage.setItem('theme', next ? 'dark' : 'light')
+      } catch (err) {
+        console.warn('[theme] failed to persist theme', err)
+      }
+      return next
+    })
+  }
+
   return (
     <div className="px-6 py-5">
       <div className="card">
@@ -278,6 +297,41 @@ export default function TopNav({ agentControls }) {
                 Admin
               </NavLink>
             ) : null}
+            <button
+              type="button"
+              onClick={handleToggleTheme}
+              className="btn-ghost h-10 text-slate-700"
+              aria-pressed={isDark}
+              aria-label={isDark ? 'Alternar para tema claro' : 'Alternar para tema escuro'}
+            >
+              {isDark ? (
+                <>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path
+                      d="M12 3v2.5M12 18.5V21M4.22 4.22l1.77 1.77M18.01 18.01l1.77 1.77M3 12h2.5M18.5 12H21M4.22 19.78l1.77-1.77M18.01 5.99l1.77-1.77M16 12a4 4 0 11-8 0 4 4 0 018 0z"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                  <span>Tema claro</span>
+                </>
+              ) : (
+                <>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path
+                      d="M21 14.5A8.5 8.5 0 119.5 3a6.5 6.5 0 0011.5 11.5z"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                  <span>Tema escuro</span>
+                </>
+              )}
+            </button>
             <button type="button" onClick={signOut} className="btn-secondary h-10">
               Sair
             </button>
