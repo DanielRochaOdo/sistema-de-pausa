@@ -1,16 +1,21 @@
 import { useEffect, useMemo, useState } from 'react'
 import TopNav from '../components/TopNav'
+import { useAuth } from '../contexts/useAuth'
 import { fetchPauses } from '../services/apiReports'
-import { listAgents, listSectors } from '../services/apiAdmin'
+import { listAgents, listManagerSectors, listSectors } from '../services/apiAdmin'
 import { getPauseTypes, listPauseSchedules } from '../services/apiPauses'
 import { exportCsv, exportPdf, exportXlsx } from '../utils/export'
 import { formatDateTime, formatDuration, formatInputDate, startOfMonth } from '../utils/format'
 
-export default function Reports() {
+export default function Reports({ adminMode = false }) {
+  const { profile } = useAuth()
+  const isManager = profile?.role === 'GERENTE'
+  const restrictScope = isManager && !adminMode
   const [agents, setAgents] = useState([])
   const [pauseTypes, setPauseTypes] = useState([])
   const [sectors, setSectors] = useState([])
   const [pauseSchedules, setPauseSchedules] = useState([])
+  const [managerSectorIds, setManagerSectorIds] = useState([])
   const [fromDate, setFromDate] = useState(formatInputDate(startOfMonth()))
   const [toDate, setToDate] = useState(formatInputDate(new Date()))
   const [agentId, setAgentId] = useState('')
@@ -31,35 +36,103 @@ export default function Reports() {
   }
 
   useEffect(() => {
+    if (restrictScope && !profile?.id) return
     const init = async () => {
       try {
-        const [agentsData, typesData, sectorsData, schedulesData] = await Promise.all([
+        const requests = [
           listAgents(),
           getPauseTypes(false),
           listSectors(),
           listPauseSchedules()
-        ])
+        ]
+        if (restrictScope) {
+          requests.push(listManagerSectors())
+        }
+        const results = await Promise.all(requests)
+        const [agentsData, typesData, sectorsData, schedulesData] = results
+        const managerSectorsData = restrictScope ? results[4] : []
         setAgents(agentsData)
         setPauseTypes(typesData)
         setSectors(sectorsData)
         setPauseSchedules(schedulesData || [])
+        if (restrictScope) {
+          const ownSectors = (managerSectorsData || [])
+            .filter((row) => row.manager_id === profile?.id)
+            .map((row) => row.sector_id)
+            .filter(Boolean)
+          const fallback = profile?.team_id ? [profile.team_id] : []
+          const nextIds = ownSectors.length ? ownSectors : fallback
+          setManagerSectorIds(Array.from(new Set(nextIds)))
+        } else {
+          setManagerSectorIds([])
+        }
       } catch (err) {
         console.error(err)
       }
     }
     init()
-  }, [])
+  }, [restrictScope, profile?.id, profile?.team_id])
+
+  const allowedSectorIds = useMemo(() => {
+    if (!restrictScope) return []
+    if (managerSectorIds.length) return managerSectorIds
+    const fallback = agents
+      .filter((agent) => agent.manager_id === profile?.id)
+      .map((agent) => agent.team_id)
+      .filter(Boolean)
+    return Array.from(new Set(fallback))
+  }, [restrictScope, managerSectorIds, agents, profile?.id])
+
+  const scopedAgents = useMemo(() => {
+    if (!restrictScope) return agents
+    if (!profile?.id) return []
+    const allowedSectors = new Set(allowedSectorIds)
+    return agents.filter(
+      (agent) =>
+        agent.manager_id === profile.id || (agent.team_id && allowedSectors.has(agent.team_id))
+    )
+  }, [agents, restrictScope, allowedSectorIds, profile?.id])
+
+  const scopedSectors = useMemo(() => {
+    if (!restrictScope) return sectors
+    const allowed = new Set(allowedSectorIds)
+    return sectors.filter((sector) => allowed.has(sector.id))
+  }, [sectors, restrictScope, allowedSectorIds])
+
+  const scopedAgentIds = useMemo(() => scopedAgents.map((agent) => agent.id), [scopedAgents])
+  const visibleAgents = useMemo(
+    () => (restrictScope ? scopedAgents : agents),
+    [restrictScope, scopedAgents, agents]
+  )
+  const visibleSectors = useMemo(
+    () => (restrictScope ? scopedSectors : sectors),
+    [restrictScope, scopedSectors, sectors]
+  )
 
   const loadReport = async () => {
     setLoading(true)
     setError('')
     try {
+      if (restrictScope && !scopedAgentIds.length) {
+        setRows([])
+        return
+      }
+      if (restrictScope && agentId && !scopedAgentIds.includes(agentId)) {
+        setRows([])
+        return
+      }
+      if (restrictScope && sectorId && !allowedSectorIds.includes(sectorId)) {
+        setRows([])
+        return
+      }
+      const allowedAgentIds = restrictScope && !agentId ? scopedAgentIds : null
       const data = await fetchPauses({
         from: fromDate,
         to: toDate,
         agentId: agentId || null,
         pauseTypeId: pauseTypeId || null,
-        sectorId: sectorId || null
+        sectorId: sectorId || null,
+        agentIds: allowedAgentIds
       })
       setRows(data || [])
     } catch (err) {
@@ -71,7 +144,21 @@ export default function Reports() {
 
   useEffect(() => {
     loadReport()
-  }, [fromDate, toDate, agentId, pauseTypeId, sectorId])
+  }, [fromDate, toDate, agentId, pauseTypeId, sectorId, restrictScope, scopedAgentIds, allowedSectorIds])
+
+  useEffect(() => {
+    if (!restrictScope) return
+    if (agentId && !scopedAgentIds.includes(agentId)) {
+      setAgentId('')
+    }
+  }, [restrictScope, agentId, scopedAgentIds])
+
+  useEffect(() => {
+    if (!restrictScope) return
+    if (sectorId && !allowedSectorIds.includes(sectorId)) {
+      setSectorId('')
+    }
+  }, [restrictScope, sectorId, allowedSectorIds])
 
   const formatLimit = (minutes) => {
     if (minutes === null || minutes === undefined) return ''
@@ -81,9 +168,16 @@ export default function Reports() {
     return `${hours}:${mins}`
   }
 
+  const scopedPauseSchedules = useMemo(() => {
+    if (!restrictScope) return pauseSchedules
+    if (!scopedAgentIds.length) return []
+    const allowed = new Set(scopedAgentIds)
+    return (pauseSchedules || []).filter((schedule) => allowed.has(schedule.agent_id))
+  }, [pauseSchedules, restrictScope, scopedAgentIds])
+
   const scheduleMinutesByKey = useMemo(() => {
     const map = new Map()
-    ;(pauseSchedules || []).forEach((schedule) => {
+    ;(scopedPauseSchedules || []).forEach((schedule) => {
       const key = `${schedule.agent_id}:${schedule.pause_type_id}`
       const time = schedule.scheduled_time
       if (!time) return
@@ -95,7 +189,7 @@ export default function Reports() {
     })
     map.forEach((list) => list.sort((a, b) => a - b))
     return map
-  }, [pauseSchedules])
+  }, [scopedPauseSchedules])
 
   const getToleranceStatus = (row) => {
     if (row.atraso) return 'Atraso'
@@ -137,7 +231,7 @@ export default function Reports() {
 
   const handleExport = (format) => {
     if (!rowsWithStatus.length) return
-    const sectorMap = new Map(sectors.map((sector) => [sector.id, sector.label]))
+    const sectorMap = new Map(visibleSectors.map((sector) => [sector.id, sector.label]))
     const mapped = rowsWithStatus.map((row) => ({
       agente: row.profiles?.full_name,
       setor: sectorMap.get(row.profiles?.team_id) || '',
@@ -185,7 +279,7 @@ export default function Reports() {
               <label className="label">Agente</label>
               <select className="input mt-1" value={agentId} onChange={(e) => setAgentId(e.target.value)}>
                 <option value="">Todos</option>
-                {agents.map((agent) => (
+                {visibleAgents.map((agent) => (
                   <option key={agent.id} value={agent.id}>
                     {agent.full_name}
                   </option>
@@ -207,7 +301,7 @@ export default function Reports() {
               <label className="label">Setor</label>
               <select className="input mt-1" value={sectorId} onChange={(e) => setSectorId(e.target.value)}>
                 <option value="">Todos</option>
-                {sectors.map((sector) => (
+                {visibleSectors.map((sector) => (
                   <option key={sector.id} value={sector.id}>
                     {sector.label}
                   </option>

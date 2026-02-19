@@ -19,6 +19,21 @@ const jsonResponse = (status: number, body: unknown) =>
     headers: { ...corsHeaders, 'Content-Type': 'application/json' }
   })
 
+const normalizeEmail = (value: string) => value.trim().toLowerCase()
+
+const safeSyncProfileEmail = async (
+  adminClient: ReturnType<typeof createClient>,
+  userId: string,
+  email: string
+) => {
+  if (!userId || !email) return
+  try {
+    await adminClient.from('profiles').update({ email }).eq('id', userId)
+  } catch (_) {
+    // ignore sync errors
+  }
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders, status: 204 })
@@ -42,11 +57,47 @@ serve(async (req) => {
     return jsonResponse(400, { error: 'Missing identifier' })
   }
 
-  if (identifier.includes('@')) {
-    return jsonResponse(200, { email: identifier })
+  const adminClient = createClient(supabaseUrl, supabaseServiceRoleKey)
+
+  const ensureAuthEmail = async (userId: string, currentEmail = '') => {
+    if (!userId) return { email: '', error: new Error('Missing user id') }
+    const { data: userData, error: userError } = await adminClient.auth.admin.getUserById(userId)
+    if (userError) {
+      return { email: '', error: userError }
+    }
+    const authEmail = userData?.user?.email ? normalizeEmail(userData.user.email) : ''
+    const profileEmail = currentEmail ? normalizeEmail(currentEmail) : ''
+    if (authEmail && authEmail !== profileEmail) {
+      await safeSyncProfileEmail(adminClient, userId, authEmail)
+    }
+    return { email: authEmail }
   }
 
-  const adminClient = createClient(supabaseUrl, supabaseServiceRoleKey)
+  if (identifier.includes('@')) {
+    const normalizedEmail = normalizeEmail(identifier)
+    const { data: emailProfile, error: emailError } = await adminClient
+      .from('profiles')
+      .select('id, email')
+      .ilike('email', normalizedEmail)
+      .maybeSingle()
+
+    if (emailError) {
+      return jsonResponse(400, { error: emailError.message || 'Failed to resolve login' })
+    }
+
+    if (emailProfile?.id) {
+      const { email, error } = await ensureAuthEmail(emailProfile.id, emailProfile.email || '')
+      if (error) {
+        return jsonResponse(404, { error: 'Usuario sem acesso no sistema' })
+      }
+      if (!email) {
+        return jsonResponse(400, { error: 'Email nao cadastrado' })
+      }
+      return jsonResponse(200, { email })
+    }
+
+    return jsonResponse(200, { email: normalizedEmail })
+  }
 
   const findByName = async (pattern: string) => {
     return adminClient
@@ -81,16 +132,13 @@ serve(async (req) => {
   }
 
   const profile = data[0]
-  let email = profile?.email || ''
-  if (!email && profile?.id) {
-    const { data: userData, error: userError } = await adminClient.auth.admin.getUserById(profile.id)
-    if (userError) {
-      return jsonResponse(400, { error: userError.message || 'Falha ao carregar usuario' })
-    }
-    email = userData?.user?.email || ''
-    if (email) {
-      await adminClient.from('profiles').update({ email }).eq('id', profile.id)
-    }
+  if (!profile?.id) {
+    return jsonResponse(400, { error: 'Usuario sem acesso no sistema' })
+  }
+
+  const { email, error: authError } = await ensureAuthEmail(profile.id, profile?.email || '')
+  if (authError) {
+    return jsonResponse(404, { error: 'Usuario sem acesso no sistema' })
   }
   if (!email) {
     return jsonResponse(400, { error: 'Email nao cadastrado' })

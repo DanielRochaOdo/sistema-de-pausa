@@ -6,10 +6,14 @@ const parseLocalDate = (value) => {
 }
 
 export async function fetchPauses(filters) {
-  const { from, to, agentId, pauseTypeId, sectorId } = filters
+  const { from, to, agentId, pauseTypeId, sectorId, agentIds } = filters
   const fromDate = parseLocalDate(from)
   const toDate = parseLocalDate(to)
   toDate.setDate(toDate.getDate() + 1)
+
+  if (Array.isArray(agentIds) && agentIds.length === 0) {
+    return []
+  }
 
   let query = supabase
     .from('pauses')
@@ -20,7 +24,11 @@ export async function fetchPauses(filters) {
     .lt('started_at', toDate.toISOString())
     .order('started_at', { ascending: false })
 
-  if (agentId) query = query.eq('agent_id', agentId)
+  if (agentId) {
+    query = query.eq('agent_id', agentId)
+  } else if (Array.isArray(agentIds) && agentIds.length) {
+    query = query.in('agent_id', agentIds)
+  }
   if (pauseTypeId) query = query.eq('pause_type_id', pauseTypeId)
   if (sectorId) query = query.eq('profiles.team_id', sectorId)
 

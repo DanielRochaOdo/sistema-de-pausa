@@ -41,6 +41,14 @@ export default function App() {
           }
         />
         <Route
+          path="/admin/reports"
+          element={
+            <ProtectedRoute allowedRoles={['ADMIN']}>
+              <Reports adminMode />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/admin"
           element={
             <ProtectedRoute allowedRoles={['ADMIN']}>

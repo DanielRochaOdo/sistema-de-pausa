@@ -30,14 +30,27 @@ export async function listManagers() {
 }
 
 export async function updateProfile(id, updates) {
-  const { data, error } = await supabase
-    .from('profiles')
-    .update(updates)
-    .eq('id', id)
-    .select()
-    .single()
-  if (error) throw error
-  return data
+  if (!id) throw new Error('Missing user id')
+  const { data, error } = await supabase.functions.invoke('admin-update-user', {
+    body: { user_id: id, ...updates }
+  })
+  if (error) {
+    let message = error.message || 'Falha ao atualizar usuario'
+    try {
+      const response = error.context
+      if (response?.json) {
+        const parsed = await response.json()
+        if (parsed?.error) message = parsed.error
+      }
+    } catch (_) {
+      // ignore parse errors
+    }
+    throw new Error(message)
+  }
+  if (data?.error) {
+    throw new Error(data.error)
+  }
+  return data?.profile || data
 }
 
 export async function listPauseTypes() {

@@ -18,11 +18,12 @@ export default function TopNav({ agentControls }) {
   const showAgent = profile?.role === 'AGENTE'
   const showManager = profile?.role === 'GERENTE' || profile?.role === 'ADMIN'
   const showAdmin = profile?.role === 'ADMIN'
-  const isAdminScreen = location?.pathname === '/admin'
+  const isAdminScreen = location?.pathname?.startsWith('/admin')
   const isAdminLike = profile?.role === 'ADMIN' || profile?.is_admin
   const showAdminPanel = profile?.role === 'GERENTE' && profile?.is_admin && !isAdminScreen
   const showManagerPanel = isAdminScreen && isAdminLike
   const showDashboard = showManager && !isAdminScreen
+  const reportsLink = isAdminScreen && isAdminLike ? '/admin/reports' : '/reports'
   const showBell = profile?.role === 'GERENTE'
   const activeLateCount = activeLatePauses.length
   const totalLateCount = lateCount + activeLateCount
@@ -259,7 +260,7 @@ export default function TopNav({ agentControls }) {
             ) : null}
             {showManager ? (
               <NavLink
-                to="/reports"
+                to={reportsLink}
                 className={({ isActive }) =>
                   `btn h-10 ${isActive ? 'bg-brand-600 text-white' : 'btn-ghost text-slate-700'}`
                 }
