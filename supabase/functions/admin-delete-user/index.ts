@@ -47,21 +47,26 @@ serve(async (req) => {
     return jsonResponse(401, { error: 'Invalid token' })
   }
 
-  let effectiveRole = authData.user?.app_metadata?.role
+  let isAdmin = false
+  const appRole = authData.user?.app_metadata?.role
+  if (typeof appRole === 'string' && appRole.toUpperCase() === 'ADMIN') {
+    isAdmin = true
+  }
 
-  if (!effectiveRole) {
+  if (!isAdmin) {
     const { data: profile, error: profileError } = await userClient
       .from('profiles')
-      .select('role')
+      .select('role, is_admin')
       .eq('id', authData.user.id)
       .single()
     if (!profileError) {
-      effectiveRole = profile?.role
+      const normalizedProfileRole =
+        typeof profile?.role === 'string' ? profile.role.toUpperCase() : ''
+      isAdmin = normalizedProfileRole === 'ADMIN' || profile?.is_admin === true
     }
   }
 
-  const normalizedRole = typeof effectiveRole === 'string' ? effectiveRole.toUpperCase() : ''
-  if (normalizedRole !== 'ADMIN') {
+  if (!isAdmin) {
     return jsonResponse(403, { error: 'Forbidden' })
   }
 

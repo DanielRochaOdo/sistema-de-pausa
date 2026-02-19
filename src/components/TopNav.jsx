@@ -1,5 +1,5 @@
 ﻿import { useEffect, useRef, useState } from 'react'
-import { NavLink } from 'react-router-dom'
+import { NavLink, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/useAuth'
 import { getLatePausesSummary, listActiveLatePauses, markAllLatePausesAsRead } from '../services/apiPauses'
 import { supabase } from '../services/supabaseClient'
@@ -7,6 +7,7 @@ import { formatDateTime, formatDuration, startOfToday } from '../utils/format'
 
 export default function TopNav({ agentControls }) {
   const { profile, signOut } = useAuth()
+  const location = useLocation()
   const [latePauses, setLatePauses] = useState([])
   const [lateCount, setLateCount] = useState(0)
   const [bellOpen, setBellOpen] = useState(false)
@@ -17,6 +18,11 @@ export default function TopNav({ agentControls }) {
   const showAgent = profile?.role === 'AGENTE'
   const showManager = profile?.role === 'GERENTE' || profile?.role === 'ADMIN'
   const showAdmin = profile?.role === 'ADMIN'
+  const isAdminScreen = location?.pathname === '/admin'
+  const isAdminLike = profile?.role === 'ADMIN' || profile?.is_admin
+  const showAdminPanel = profile?.role === 'GERENTE' && profile?.is_admin && !isAdminScreen
+  const showManagerPanel = isAdminScreen && isAdminLike
+  const showDashboard = showManager && !isAdminScreen
   const showBell = profile?.role === 'GERENTE'
   const activeLateCount = activeLatePauses.length
   const totalLateCount = lateCount + activeLateCount
@@ -189,14 +195,36 @@ export default function TopNav({ agentControls }) {
             ) : null}
             {showManager ? (
               <div className="flex items-center gap-2">
-                <NavLink
-                  to="/manager"
-                  className={({ isActive }) =>
-                    `btn h-10 ${isActive ? 'bg-brand-600 text-white' : 'btn-ghost text-slate-700'}`
-                  }
-                >
-                  Dashboard
-                </NavLink>
+                {showManagerPanel ? (
+                  <NavLink
+                    to="/manager"
+                    className={({ isActive }) =>
+                      `btn h-10 ${isActive ? 'bg-brand-600 text-white' : 'btn-ghost text-slate-700'}`
+                    }
+                  >
+                    Painel Gerente
+                  </NavLink>
+                ) : null}
+                {showAdminPanel ? (
+                  <NavLink
+                    to="/admin"
+                    className={({ isActive }) =>
+                      `btn h-10 ${isActive ? 'bg-brand-600 text-white' : 'btn-ghost text-slate-700'}`
+                    }
+                  >
+                    Painel Admin
+                  </NavLink>
+                ) : null}
+                {showDashboard ? (
+                  <NavLink
+                    to="/manager"
+                    className={({ isActive }) =>
+                      `btn h-10 ${isActive ? 'bg-brand-600 text-white' : 'btn-ghost text-slate-700'}`
+                    }
+                  >
+                    Dashboard
+                  </NavLink>
+                ) : null}
                 {showBell ? (
                   <button
                     type="button"

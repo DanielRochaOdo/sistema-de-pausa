@@ -3,7 +3,7 @@
 export async function listProfiles() {
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, full_name, role, manager_id, team_id, created_at')
+    .select('id, full_name, role, manager_id, team_id, created_at, email, is_admin')
     .order('full_name', { ascending: true })
   if (error) throw error
   return data
@@ -12,7 +12,7 @@ export async function listProfiles() {
 export async function listAgents() {
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, full_name, role, team_id')
+    .select('id, full_name, role, team_id, email, is_admin')
     .eq('role', 'AGENTE')
     .order('full_name', { ascending: true })
   if (error) throw error

@@ -48,14 +48,28 @@ serve(async (req) => {
 
   const adminClient = createClient(supabaseUrl, supabaseServiceRoleKey)
 
-  const { data, error } = await adminClient
-    .from('profiles')
-    .select('email, full_name')
-    .ilike('full_name', identifier)
-    .limit(2)
+  const findByName = async (pattern: string) => {
+    return adminClient
+      .from('profiles')
+      .select('id, email, full_name')
+      .ilike('full_name', pattern)
+      .limit(3)
+  }
+
+  let { data, error } = await findByName(identifier)
 
   if (error) {
     return jsonResponse(400, { error: error.message || 'Failed to resolve login' })
+  }
+
+  if (!data || data.length === 0) {
+    if (identifier.length >= 3) {
+      const fallback = await findByName(`%${identifier}%`)
+      if (fallback.error) {
+        return jsonResponse(400, { error: fallback.error.message || 'Failed to resolve login' })
+      }
+      data = fallback.data
+    }
   }
 
   if (!data || data.length === 0) {
@@ -66,7 +80,18 @@ serve(async (req) => {
     return jsonResponse(409, { error: 'Nome nao unico' })
   }
 
-  const email = data[0]?.email
+  const profile = data[0]
+  let email = profile?.email || ''
+  if (!email && profile?.id) {
+    const { data: userData, error: userError } = await adminClient.auth.admin.getUserById(profile.id)
+    if (userError) {
+      return jsonResponse(400, { error: userError.message || 'Falha ao carregar usuario' })
+    }
+    email = userData?.user?.email || ''
+    if (email) {
+      await adminClient.from('profiles').update({ email }).eq('id', profile.id)
+    }
+  }
   if (!email) {
     return jsonResponse(400, { error: 'Email nao cadastrado' })
   }

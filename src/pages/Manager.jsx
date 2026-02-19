@@ -148,7 +148,10 @@ export default function Manager() {
   const loadActiveSessions = async () => {
     setActiveSessionsLoading(true)
     try {
-      const data = await listActiveAgentSessions()
+      const data = await listActiveAgentSessions({
+        managerId: profile?.id || null,
+        restrictToManager: profile?.role === 'GERENTE'
+      })
       setActiveSessions(data || [])
     } catch (err) {
       console.error('[manager] failed to load active sessions', err)

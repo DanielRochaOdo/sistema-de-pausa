@@ -7,6 +7,7 @@ create table if not exists public.profiles (
   full_name text not null,
   email text null,
   role text not null check (role in ('ADMIN', 'GERENTE', 'AGENTE')),
+  is_admin boolean default false,
   team_id uuid null,
   manager_id uuid null,
   created_at timestamptz default now()
@@ -160,7 +161,10 @@ security definer
 set search_path = public, auth
 as $$
   select exists (
-    select 1 from public.profiles where id = p_uid and role = 'ADMIN'
+    select 1
+    from public.profiles
+    where id = p_uid
+      and (role = 'ADMIN' or is_admin = true)
   );
 $$;
 
@@ -262,13 +266,14 @@ begin
     return new;
   end if;
 
-  if public.current_role() = 'ADMIN' then
+  if public.is_admin(auth.uid()) then
     return new;
   end if;
 
   if new.role is distinct from old.role
      or new.manager_id is distinct from old.manager_id
-     or new.team_id is distinct from old.team_id then
+     or new.team_id is distinct from old.team_id
+     or new.is_admin is distinct from old.is_admin then
     raise exception 'not_allowed';
   end if;
 
@@ -352,7 +357,7 @@ begin
     return new;
   end if;
 
-  if public.current_role() = 'ADMIN' then
+  if public.is_admin(auth.uid()) then
     return new;
   end if;
 

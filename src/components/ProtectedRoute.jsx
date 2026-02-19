@@ -99,8 +99,15 @@ export default function ProtectedRoute({ allowedRoles, children }) {
     return <ProfileMissing onRetry={refreshProfile} onSignOut={signOut} />
   }
 
-  if (allowedRoles && profile?.role && !allowedRoles.includes(profile.role)) {
-    return <Navigate to="/unauthorized" replace />
+  if (allowedRoles && profile?.role) {
+    const isAdminLike = profile.role === 'ADMIN' || profile?.is_admin
+    const hasAccess = allowedRoles.some((role) => {
+      if (role === 'ADMIN') return isAdminLike
+      return role === profile.role
+    })
+    if (!hasAccess) {
+      return <Navigate to="/unauthorized" replace />
+    }
   }
 
   return children

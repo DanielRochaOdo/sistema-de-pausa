@@ -112,7 +112,8 @@ export default function Admin() {
   const [agentEditForm, setAgentEditForm] = useState({
     full_name: '',
     manager_id: '',
-    team_id: ''
+    team_id: '',
+    email: ''
   })
   const [agentEditScheduleForm, setAgentEditScheduleForm] = useState({
     pause_type_id: '',
@@ -123,7 +124,8 @@ export default function Admin() {
   const [managerEditId, setManagerEditId] = useState('')
   const [managerEditForm, setManagerEditForm] = useState({
     full_name: '',
-    email: ''
+    email: '',
+    is_admin: false
   })
   const [adminEditModalOpen, setAdminEditModalOpen] = useState(false)
   const [adminEditId, setAdminEditId] = useState('')
@@ -656,7 +658,8 @@ export default function Admin() {
     setAgentEditForm({
       full_name: agent.full_name || '',
       manager_id: agent.manager_id || '',
-      team_id: agent.team_id || ''
+      team_id: agent.team_id || '',
+      email: agent.email || ''
     })
     setAgentEditScheduleForm({
       pause_type_id: pauseTypes?.[0]?.id || '',
@@ -677,14 +680,24 @@ export default function Admin() {
     setSuccess('')
     setBusy(true)
     try {
+      if (!String(agentEditForm.full_name || '').trim()) {
+        throw new Error('Nome completo obrigatorio.')
+      }
       if (!agentEditForm.manager_id) {
         throw new Error('Selecione um gerente para o agente.')
       }
       if (!agentEditForm.team_id) {
         throw new Error('Selecione um setor para o agente.')
       }
+      if (agentEditForm.email && !isValidEmail(agentEditForm.email)) {
+        throw new Error('Email invalido.')
+      }
+      if (agentEditForm.email && isDuplicateEmail(agentEditForm.email, agentEditId)) {
+        throw new Error('Email ja cadastrado.')
+      }
       await updateProfile(agentEditId, {
         full_name: agentEditForm.full_name,
+        email: agentEditForm.email || null,
         role: 'AGENTE',
         manager_id: agentEditForm.manager_id || null,
         team_id: agentEditForm.team_id || null
@@ -727,10 +740,12 @@ export default function Admin() {
   }
 
   const openManagerEditModal = (manager) => {
+    const profileData = profiles.find((profile) => profile.id === manager.id)
     setManagerEditId(manager.id)
     setManagerEditForm({
-      full_name: manager.full_name || '',
-      email: manager.email || ''
+      full_name: profileData?.full_name || manager.full_name || '',
+      email: profileData?.email || manager.email || '',
+      is_admin: profileData?.is_admin ?? manager.is_admin ?? false
     })
     setManagerEditModalOpen(true)
   }
@@ -746,6 +761,9 @@ export default function Admin() {
     setSuccess('')
     setBusy(true)
     try {
+      if (!String(managerEditForm.full_name || '').trim()) {
+        throw new Error('Nome completo obrigatorio.')
+      }
       if (managerEditForm.email && !isValidEmail(managerEditForm.email)) {
         throw new Error('Email invalido.')
       }
@@ -763,6 +781,7 @@ export default function Admin() {
         role: 'GERENTE',
         full_name: managerEditForm.full_name,
         email: managerEditForm.email || null,
+        is_admin: !!managerEditForm.is_admin,
         team_id: sectorIds[0],
         manager_id: null
       })
@@ -778,10 +797,11 @@ export default function Admin() {
   }
 
   const openAdminEditModal = (admin) => {
+    const profileData = profiles.find((profile) => profile.id === admin.id)
     setAdminEditId(admin.id)
     setAdminEditForm({
-      full_name: admin.full_name || '',
-      email: admin.email || ''
+      full_name: profileData?.full_name || admin.full_name || '',
+      email: profileData?.email || admin.email || ''
     })
     setAdminEditModalOpen(true)
   }
@@ -797,6 +817,9 @@ export default function Admin() {
     setSuccess('')
     setBusy(true)
     try {
+      if (!String(adminEditForm.full_name || '').trim()) {
+        throw new Error('Nome completo obrigatorio.')
+      }
       if (adminEditForm.email && !isValidEmail(adminEditForm.email)) {
         throw new Error('Email invalido.')
       }
@@ -1380,7 +1403,7 @@ export default function Admin() {
                 </button>
               </div>
 
-              <div className="mt-4 grid gap-3 md:grid-cols-3">
+              <div className="mt-4 grid gap-3 md:grid-cols-4">
                 <div>
                   <label className="label">Nome</label>
                   <input
@@ -1389,6 +1412,17 @@ export default function Admin() {
                     onChange={(e) =>
                       setAgentEditForm((prev) => ({ ...prev, full_name: e.target.value }))
                     }
+                  />
+                </div>
+                <div>
+                  <label className="label">Email</label>
+                  <input
+                    className="input mt-1"
+                    value={agentEditForm.email}
+                    onChange={(e) =>
+                      setAgentEditForm((prev) => ({ ...prev, email: e.target.value }))
+                    }
+                    placeholder="Opcional"
                   />
                 </div>
                 <div>
@@ -1602,6 +1636,22 @@ export default function Admin() {
                     }
                   />
                 </div>
+              </div>
+              <div className="mt-4">
+                <label className="label">Acesso admin</label>
+                <select
+                  className="input mt-1"
+                  value={managerEditForm.is_admin ? 'true' : 'false'}
+                  onChange={(e) =>
+                    setManagerEditForm((prev) => ({ ...prev, is_admin: e.target.value === 'true' }))
+                  }
+                >
+                  <option value="false">Nao</option>
+                  <option value="true">Sim</option>
+                </select>
+                <p className="text-xs text-slate-500 mt-1">
+                  Permite acessar o Painel Admin mantendo o perfil como gerente.
+                </p>
               </div>
               <div className="mt-4">
                 <label className="label">Setores</label>
@@ -1867,6 +1917,8 @@ export default function Admin() {
               <div className="mt-4 space-y-3">
                 {managers.map((manager) => {
                   const sectorIds = getManagerSectorIds(manager.id, manager.team_id)
+                  const managerProfile = profiles.find((profile) => profile.id === manager.id)
+                  const isManagerAdmin = managerProfile?.is_admin ?? manager.is_admin
                   return (
                     <button
                       key={manager.id}
@@ -1879,6 +1931,7 @@ export default function Admin() {
                         {sectorIds.length
                           ? sectorIds.map((id) => sectorById.get(id) || 'Setor').join(', ')
                           : 'Sem setores'}
+                        {isManagerAdmin ? ' • Admin' : ''}
                       </p>
                     </button>
                   )

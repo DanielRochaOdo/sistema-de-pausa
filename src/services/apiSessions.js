@@ -17,12 +17,18 @@ export async function listAgentLoginHistory(agentId, { limit = 30, offset = 0 } 
   return data
 }
 
-export async function listActiveAgentSessions() {
-  const { data, error } = await supabase
+export async function listActiveAgentSessions({ managerId = null, restrictToManager = false } = {}) {
+  let query = supabase
     .from('user_sessions')
-    .select('id, user_id, login_at, device_type, profiles(full_name, role)')
+    .select('id, user_id, login_at, device_type, profiles(full_name, role, manager_id)')
     .is('logout_at', null)
     .order('login_at', { ascending: false })
+
+  if (restrictToManager && managerId) {
+    query = query.eq('profiles.manager_id', managerId)
+  }
+
+  const { data, error } = await query
   if (error) throw error
   return (data || []).filter((row) => row.profiles?.role === 'AGENTE')
 }

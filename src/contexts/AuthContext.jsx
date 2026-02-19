@@ -219,7 +219,7 @@ export function AuthProvider({ children }) {
       const { data, error: profileError } = await withTimeout(
         supabase
           .from('profiles')
-          .select('id, full_name, role, team_id, manager_id')
+          .select('id, full_name, role, team_id, manager_id, is_admin')
           .eq('id', userId)
           .maybeSingle(),
         PROFILE_TIMEOUT_MS,
@@ -646,7 +646,16 @@ export function AuthProvider({ children }) {
       body: { identifier: value }
     })
     if (error) {
-      const message = error?.context?.error || error.message || 'Falha ao resolver login'
+      let message = error?.message || 'Falha ao resolver login'
+      const context = error?.context
+      if (context && typeof context.json === 'function') {
+        try {
+          const parsed = await context.json()
+          if (parsed?.error) message = parsed.error
+        } catch (_) {
+          // ignore parse errors
+        }
+      }
       throw new Error(message)
     }
     if (!data?.email) throw new Error('Nome nao encontrado')
