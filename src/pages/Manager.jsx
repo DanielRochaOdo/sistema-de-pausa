@@ -148,10 +148,7 @@ export default function Manager() {
   const loadActiveSessions = async () => {
     setActiveSessionsLoading(true)
     try {
-      const data = await listActiveAgentSessions({
-        managerId: profile?.id || null,
-        restrictToManager: profile?.role === 'GERENTE'
-      })
+      const data = await listActiveAgentSessions()
       setActiveSessions(data || [])
     } catch (err) {
       console.error('[manager] failed to load active sessions', err)
@@ -368,11 +365,53 @@ export default function Manager() {
     return () => clearInterval(interval)
   }, [tab])
 
+  const managerSectorScope = useMemo(() => {
+    if (isAdmin) return []
+    const ids = (managerSectorIds || []).filter(Boolean)
+    if (ids.length) return ids
+    if (profile?.team_id) return [profile.team_id]
+    return []
+  }, [isAdmin, managerSectorIds, profile?.team_id])
+
+  const scopedAgents = useMemo(() => {
+    if (isAdmin) return agents
+    const managerId = profile?.id
+    if (!managerSectorScope.length && !managerId) return []
+    return agents.filter((agent) => {
+      const inSector =
+        managerSectorScope.length && agent.team_id && managerSectorScope.includes(agent.team_id)
+      const managedById = managerId && agent.manager_id === managerId
+      return inSector || managedById
+    })
+  }, [agents, isAdmin, managerSectorScope, profile?.id])
+
+  const scopedAgentIds = useMemo(() => new Set(scopedAgents.map((agent) => agent.id)), [scopedAgents])
+
+  const scopedLogins = useMemo(() => {
+    if (isAdmin) return logins
+    if (!scopedAgentIds.size) return []
+    return logins.filter((item) => scopedAgentIds.has(item.agent_id))
+  }, [isAdmin, logins, scopedAgentIds])
+
+  const scopedDashboard = useMemo(() => {
+    if (isAdmin) return dashboard
+    if (!scopedAgentIds.size) return []
+    return dashboard.filter((row) => scopedAgentIds.has(row.agent_id))
+  }, [dashboard, isAdmin, scopedAgentIds])
+
+  const scopedPauseSchedules = useMemo(() => {
+    if (isAdmin) return pauseSchedules
+    if (!scopedAgentIds.size) return []
+    return pauseSchedules.filter((schedule) =>
+      scopedAgentIds.has(schedule.agent_id || schedule.profiles?.id)
+    )
+  }, [pauseSchedules, isAdmin, scopedAgentIds])
+
   const summary = useMemo(() => {
     const map = new Map()
     const totals = { pauses: 0, duration: 0 }
 
-    dashboard.forEach((row) => {
+    scopedDashboard.forEach((row) => {
       const id = row.agent_id
       if (!map.has(id)) {
         map.set(id, {
@@ -397,11 +436,11 @@ export default function Manager() {
     })
 
     return { rows: Array.from(map.values()), totals }
-  }, [dashboard])
+  }, [scopedDashboard])
 
   const schedulesByAgent = useMemo(() => {
     const map = new Map()
-    pauseSchedules.forEach((schedule) => {
+    scopedPauseSchedules.forEach((schedule) => {
       const key = schedule.agent_id || schedule.profiles?.id
       if (!key) return
       if (!map.has(key)) map.set(key, [])
@@ -413,11 +452,11 @@ export default function Manager() {
       )
     })
     return map
-  }, [pauseSchedules])
+  }, [scopedPauseSchedules])
 
   const agentsBySector = useMemo(() => {
     const map = {}
-    agents.forEach((agent) => {
+    scopedAgents.forEach((agent) => {
       if (!agent.team_id) return
       if (!map[agent.team_id]) map[agent.team_id] = []
       map[agent.team_id].push(agent)
@@ -426,18 +465,25 @@ export default function Manager() {
       list.sort((a, b) => (a.full_name || '').localeCompare(b.full_name || ''))
     })
     return map
-  }, [agents])
+  }, [scopedAgents])
 
   const scopedSectors = useMemo(() => {
     if (isAdmin) return sectors
-    return sectors.filter((sector) => managerSectorIds.includes(sector.id))
-  }, [isAdmin, sectors, managerSectorIds])
+    if (!managerSectorScope.length) return []
+    return sectors.filter((sector) => managerSectorScope.includes(sector.id))
+  }, [isAdmin, sectors, managerSectorScope])
 
   useEffect(() => {
     if (sectorId && !scopedSectors.find((sector) => sector.id === sectorId)) {
       setSectorId('')
     }
   }, [scopedSectors, sectorId])
+
+  useEffect(() => {
+    if (agentId && !scopedAgents.find((agent) => agent.id === agentId)) {
+      setAgentId('')
+    }
+  }, [agentId, scopedAgents])
 
   const visibleSectors = useMemo(() => {
     const sectorIds = new Set(Object.keys(agentsBySector))
@@ -453,7 +499,7 @@ export default function Manager() {
   }, [sectors])
 
   const sortedAgents = useMemo(() => {
-    const list = [...agents]
+    const list = [...scopedAgents]
     const nextTime = (agentId) => {
       const items = schedulesByAgent.get(agentId) || []
       const withTime = items.find((item) => item.scheduled_time)
@@ -467,7 +513,7 @@ export default function Manager() {
       if (bTime) return 1
       return a.full_name.localeCompare(b.full_name)
     })
-  }, [agents, schedulesByAgent])
+  }, [scopedAgents, schedulesByAgent])
 
   const ranking = useMemo(() => {
     return [...summary.rows]
@@ -486,8 +532,20 @@ export default function Manager() {
     return `${hours}:${mins}`
   }
 
-  const activeSessionsCount = activeSessionsLoading ? '...' : activeSessions.length
-  const activePausesCount = activePausesLoading ? '...' : activePauses.length
+  const scopedActiveSessions = useMemo(() => {
+    if (isAdmin) return activeSessions
+    if (!scopedAgentIds.size) return []
+    return activeSessions.filter((session) => scopedAgentIds.has(session.user_id))
+  }, [activeSessions, isAdmin, scopedAgentIds])
+
+  const scopedActivePauses = useMemo(() => {
+    if (isAdmin) return activePauses
+    if (!scopedAgentIds.size) return []
+    return activePauses.filter((pause) => scopedAgentIds.has(pause.agent_id))
+  }, [activePauses, isAdmin, scopedAgentIds])
+
+  const activeSessionsCount = activeSessionsLoading ? '...' : scopedActiveSessions.length
+  const activePausesCount = activePausesLoading ? '...' : scopedActivePauses.length
 
   const Modal = ({ open, title, onClose, children }) => {
     if (!open) return null
@@ -655,7 +713,7 @@ export default function Manager() {
                   </tr>
                 </thead>
                 <tbody className="text-slate-900">
-                  {logins.map((item) => {
+                  {scopedLogins.map((item) => {
                     const isActive = !!item.login_at && !item.logout_at
                     const isSelected = selectedAgent?.agent_id === item.agent_id
                     return (
@@ -704,7 +762,7 @@ export default function Manager() {
                       </tr>
                     )
                   })}
-                  {!logins.length ? (
+                  {!scopedLogins.length ? (
                     <tr>
                       <td className="py-3 text-slate-500" colSpan="6">
                         Nenhum login registrado.
@@ -843,7 +901,7 @@ export default function Manager() {
         <div className="grid gap-4 md:grid-cols-3">
           <StatCard
             label="Agentes"
-            value={agents.length}
+            value={scopedAgents.length}
             sub="Vinculados ao gerente"
             onClick={() => setAgentsModalOpen(true)}
           />
@@ -910,7 +968,7 @@ export default function Manager() {
               <label className="label">Agente</label>
               <select className="input mt-1" value={agentId} onChange={(e) => setAgentId(e.target.value)}>
                 <option value="">Todos</option>
-                {agents.map((agent) => (
+                {scopedAgents.map((agent) => (
                   <option key={agent.id} value={agent.id}>
                     {agent.full_name}
                   </option>
@@ -966,7 +1024,7 @@ export default function Manager() {
                   onChange={(e) => setScheduleForm((prev) => ({ ...prev, agent_id: e.target.value }))}
                 >
                   <option value="">Selecione</option>
-                  {agents.map((agent) => (
+                  {scopedAgents.map((agent) => (
                     <option key={agent.id} value={agent.id}>
                       {agent.full_name}
                     </option>
@@ -1059,7 +1117,7 @@ export default function Manager() {
                     </button>
                   )
                 })}
-                {!agents.length ? <p className="text-sm text-slate-500">Nenhum agente encontrado.</p> : null}
+                {!scopedAgents.length ? <p className="text-sm text-slate-500">Nenhum agente encontrado.</p> : null}
               </div>
             ) : (
               <div className="mt-4 space-y-2">
@@ -1204,7 +1262,7 @@ export default function Manager() {
                     </tr>
                   </thead>
                   <tbody className="text-slate-900">
-                    {pauseSchedules
+                    {scopedPauseSchedules
                       .filter((schedule) => schedule.agent_id === agentModalId)
                       .map((schedule) => (
                         <tr key={schedule.id} className="border-t border-slate-100">
@@ -1261,7 +1319,7 @@ export default function Manager() {
                           </td>
                         </tr>
                       ))}
-                    {!pauseSchedules.filter((schedule) => schedule.agent_id === agentModalId).length ? (
+                    {!scopedPauseSchedules.filter((schedule) => schedule.agent_id === agentModalId).length ? (
                       <tr>
                         <td className="py-3 text-slate-500" colSpan="4">
                           Nenhuma pausa cadastrada.
@@ -1329,9 +1387,9 @@ export default function Manager() {
       ) : null}
 
       <Modal open={agentsModalOpen} title="Agentes vinculados" onClose={() => setAgentsModalOpen(false)}>
-        {agents.length ? (
+        {scopedAgents.length ? (
           <div className="space-y-2">
-            {agents.map((agent) => (
+            {scopedAgents.map((agent) => (
               <div key={agent.id} className="flex items-center justify-between rounded-xl border border-slate-100 px-3 py-2">
                 <span className="text-sm font-medium text-slate-900">{agent.full_name}</span>
               </div>
@@ -1343,9 +1401,9 @@ export default function Manager() {
       </Modal>
 
       <Modal open={loggedModalOpen} title="Agentes logados" onClose={() => setLoggedModalOpen(false)}>
-        {activeSessions.length ? (
+        {scopedActiveSessions.length ? (
           <div className="space-y-2">
-            {activeSessions.map((item) => (
+            {scopedActiveSessions.map((item) => (
               <div
                 key={item.id}
                 className="flex items-center justify-between rounded-xl border border-slate-100 px-3 py-2"
@@ -1372,9 +1430,9 @@ export default function Manager() {
       </Modal>
 
       <Modal open={pausedModalOpen} title="Agentes em pausa" onClose={() => setPausedModalOpen(false)}>
-        {activePauses.length ? (
+        {scopedActivePauses.length ? (
           <div className="space-y-2">
-            {activePauses.map((item) => (
+            {scopedActivePauses.map((item) => (
               <div
                 key={item.id}
                 className="flex items-center justify-between rounded-xl border border-slate-100 px-3 py-2"

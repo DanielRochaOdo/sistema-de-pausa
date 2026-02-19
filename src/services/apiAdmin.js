@@ -12,7 +12,7 @@ export async function listProfiles() {
 export async function listAgents() {
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, full_name, role, team_id, email, is_admin')
+    .select('id, full_name, role, team_id, manager_id, email, is_admin')
     .eq('role', 'AGENTE')
     .order('full_name', { ascending: true })
   if (error) throw error
