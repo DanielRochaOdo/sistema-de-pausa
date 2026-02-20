@@ -168,6 +168,25 @@ export default function Reports({ adminMode = false }) {
     return `${hours}:${mins}`
   }
 
+  const formatDateLabel = (value) => {
+    if (!value) return '-'
+    const [year, month, day] = String(value).split('-')
+    if (!year || !month || !day) return String(value)
+    return `${day}/${month}/${year}`
+  }
+
+  const resolveMachineIp = (row) => {
+    return (
+      row?.machine_ip ||
+      row?.ip_address ||
+      row?.ip_maquina ||
+      row?.profiles?.machine_ip ||
+      row?.profiles?.ip_address ||
+      row?.profiles?.ip_maquina ||
+      ''
+    )
+  }
+
   const scopedPauseSchedules = useMemo(() => {
     if (!restrictScope) return pauseSchedules
     if (!scopedAgentIds.length) return []
@@ -229,11 +248,12 @@ export default function Reports({ adminMode = false }) {
     return rows.map((row) => ({ ...row, status: getToleranceStatus(row) }))
   }, [rows, scheduleMinutesByKey])
 
-  const handleExport = (format) => {
+  const handleExport = async (format) => {
     if (!rowsWithStatus.length) return
     const sectorMap = new Map(visibleSectors.map((sector) => [sector.id, sector.label]))
     const mapped = rowsWithStatus.map((row) => ({
       agente: row.profiles?.full_name,
+      ip_maquina: resolveMachineIp(row),
       setor: sectorMap.get(row.profiles?.team_id) || '',
       tipo: row.pause_types?.label,
       tempo_limite: formatLimit(row.pause_types?.limit_minutes),
@@ -246,7 +266,35 @@ export default function Reports({ adminMode = false }) {
     const baseName = `relatorio-pausas-${fromDate}-a-${toDate}`
     if (format === 'csv') exportCsv(mapped, `${baseName}.csv`)
     if (format === 'xlsx') exportXlsx(mapped, `${baseName}.xlsx`)
-    if (format === 'pdf') exportPdf(mapped, `${baseName}.pdf`, 'Relatorio de Pausas')
+    if (format === 'pdf') {
+      const agentLabel = agentId
+        ? visibleAgents.find((agent) => agent.id === agentId)?.full_name || 'Nao encontrado'
+        : 'Todos'
+      const typeLabel = pauseTypeId
+        ? pauseTypes.find((type) => type.id === pauseTypeId)?.label || 'Nao encontrado'
+        : 'Todos'
+      const sectorLabel = sectorId
+        ? visibleSectors.find((sector) => sector.id === sectorId)?.label || 'Nao encontrado'
+        : 'Todos'
+      const filters = [
+        { label: 'Periodo', value: `${formatDateLabel(fromDate)} a ${formatDateLabel(toDate)}` },
+        { label: 'Agente', value: agentLabel },
+        { label: 'Tipo', value: typeLabel },
+        { label: 'Setor', value: sectorLabel }
+      ]
+      const generatedBy = profile?.full_name || profile?.email || 'Usuario'
+      const generatedAt = formatDateTime(new Date())
+      const logoUrl = `${import.meta.env.BASE_URL || '/'}logo-odontoart.png`
+      await exportPdf(mapped, `${baseName}.pdf`, 'Relatorio de Pausas', {
+        filters,
+        generatedBy,
+        generatedAt,
+        logo: logoUrl,
+        logoWidth: 198,
+        logoHeight: 58,
+        logoYOffset: -1
+      })
+    }
     setExportOpen(false)
   }
 
@@ -337,7 +385,7 @@ export default function Reports({ adminMode = false }) {
 
         <div className="card">
           <div className="flex items-center justify-between">
-            <h3 className="font-display text-lg font-semibold text-slate-900">Preview</h3>
+            <h3 className="font-display text-lg font-semibold text-slate-900">Registros</h3>
             <span className="text-sm text-slate-500">{rowsWithStatus.length} registros</span>
           </div>
           <div className="mt-4 overflow-x-auto">
@@ -345,6 +393,7 @@ export default function Reports({ adminMode = false }) {
               <thead className="text-slate-500">
                 <tr>
                   <th className="text-left py-2">Agente</th>
+                  <th className="text-left py-2">IP maquina</th>
                   <th className="text-left py-2">Tipo</th>
                   <th className="text-left py-2">Inicio</th>
                   <th className="text-left py-2">Fim</th>
@@ -358,6 +407,7 @@ export default function Reports({ adminMode = false }) {
                     className={`border-t border-slate-100 ${row.status === 'Atraso' ? 'bg-amber-50' : row.status === 'Tolerancia' ? 'bg-blue-50' : ''}`}
                   >
                     <td className="py-2">{row.profiles?.full_name}</td>
+                    <td className="py-2">{resolveMachineIp(row) || '-'}</td>
                     <td className="py-2">
                       <div className="flex items-center gap-2">
                         <span>{row.pause_types?.label}</span>
@@ -377,7 +427,7 @@ export default function Reports({ adminMode = false }) {
                 ))}
                 {!rowsWithStatus.length ? (
                   <tr>
-                    <td className="py-3 text-slate-500" colSpan="5">
+                    <td className="py-3 text-slate-500" colSpan="6">
                       Nenhum registro encontrado.
                     </td>
                   </tr>

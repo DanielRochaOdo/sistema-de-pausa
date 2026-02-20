@@ -589,7 +589,7 @@ export default function Manager() {
       const baseName = `historico-login-${selectedAgent.agent_name || 'agente'}`
       if (format === 'csv') exportCsv(mapped, `${baseName}.csv`)
       if (format === 'xlsx') exportXlsx(mapped, `${baseName}.xlsx`)
-      if (format === 'pdf') exportPdf(mapped, `${baseName}.pdf`, 'Historico de Login')
+      if (format === 'pdf') await exportPdf(mapped, `${baseName}.pdf`, 'Historico de Login')
       setHistoryExportOpen(false)
     } catch (err) {
       setHistoryError(err.message || 'Falha ao exportar historico')
@@ -708,7 +708,6 @@ export default function Manager() {
                     <th className="text-left py-2">Login</th>
                     <th className="text-left py-2">Ultimo logout</th>
                     <th className="text-left py-2">Sessao</th>
-                    <th className="text-left py-2">Tempo hoje</th>
                     <th className="text-left py-2">Dispositivo</th>
                   </tr>
                 </thead>
@@ -748,9 +747,6 @@ export default function Manager() {
                             {formatSessionDuration(item.login_at, item.logout_at)}
                           </span>
                           {isActive ? <span className="ml-2 text-xs text-emerald-600">Atual</span> : null}
-                        </td>
-                        <td className="py-2">
-                          {formatTotalToday(item.total_today_seconds, item.login_at, item.logout_at)}
                         </td>
                         <td className="py-2">
                           {item.device_type === 'mobile'

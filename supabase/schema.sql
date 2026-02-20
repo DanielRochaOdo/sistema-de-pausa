@@ -1,6 +1,7 @@
 ﻿-- Supabase schema for Controle de Pausas
 
 create extension if not exists "pgcrypto";
+create extension if not exists "pg_net";
 
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
@@ -57,6 +58,7 @@ create table if not exists public.pauses (
   ended_at timestamptz null,
   duration_seconds int null,
   atraso boolean default false,
+  machine_ip text null,
   notes text null,
   created_at timestamptz default now()
 );
@@ -78,6 +80,23 @@ create table if not exists public.user_sessions (
   session_token uuid not null default gen_random_uuid(),
   device_type text not null check (device_type in ('mobile', 'desktop')),
   user_agent text null,
+  created_at timestamptz default now()
+);
+
+create table if not exists public.push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  endpoint text not null,
+  p256dh text not null,
+  auth text not null,
+  user_agent text null,
+  created_at timestamptz default now(),
+  unique (user_id, endpoint)
+);
+
+create table if not exists public.app_settings (
+  key text primary key,
+  value text not null,
   created_at timestamptz default now()
 );
 
@@ -114,6 +133,12 @@ create index if not exists user_sessions_user_login_idx
 
 create unique index if not exists user_sessions_token_unique
   on public.user_sessions(session_token);
+
+create index if not exists push_subscriptions_user_idx
+  on public.push_subscriptions(user_id);
+
+create index if not exists app_settings_key_idx
+  on public.app_settings(key);
 
 create index if not exists manager_sectors_sector_idx
   on public.manager_sectors(sector_id);
@@ -399,6 +424,9 @@ declare
   v_pause_type_id uuid;
   v_existing uuid;
   v_pause_id uuid;
+  v_headers json;
+  v_forwarded text;
+  v_ip text;
 begin
   v_role := public.current_role();
   if v_role <> 'AGENTE' then
@@ -421,8 +449,31 @@ begin
     raise exception 'pause_already_active';
   end if;
 
-  insert into public.pauses(agent_id, pause_type_id)
-  values (auth.uid(), v_pause_type_id)
+  begin
+    v_headers := nullif(current_setting('request.headers', true), '')::json;
+  exception
+    when others then
+      v_headers := null;
+  end;
+  if v_headers is not null then
+    v_forwarded := trim(both ' ' from split_part(coalesce(v_headers->>'x-forwarded-for', ''), ',', 1));
+    if v_forwarded <> '' then
+      v_ip := v_forwarded;
+    end if;
+    if v_ip is null or v_ip = '' then
+      v_ip := nullif(coalesce(v_headers->>'x-real-ip', ''), '');
+    end if;
+    if v_ip is null or v_ip = '' then
+      v_ip := nullif(coalesce(v_headers->>'cf-connecting-ip', ''), '');
+    end if;
+  end if;
+
+  if v_ip is null or v_ip = '' then
+    v_ip := inet_client_addr()::text;
+  end if;
+
+  insert into public.pauses(agent_id, pause_type_id, machine_ip)
+  values (auth.uid(), v_pause_type_id, v_ip)
   returning id into v_pause_id;
 
   return v_pause_id;
@@ -679,6 +730,51 @@ begin
 end;
 $$;
 
+create or replace function public.list_active_late_pauses_for_push()
+returns table (
+  pause_id uuid,
+  manager_id uuid
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  return query
+  with active as (
+    select
+      p.id,
+      pr.manager_id,
+      pr.team_id,
+      coalesce(ps.duration_minutes, pt.limit_minutes) as limit_minutes,
+      p.started_at
+    from public.pauses p
+    join public.profiles pr on pr.id = p.agent_id
+    join public.pause_types pt on pt.id = p.pause_type_id
+    left join lateral (
+      select min(duration_minutes) as duration_minutes
+      from public.pause_schedules
+      where agent_id = p.agent_id
+        and pause_type_id = p.pause_type_id
+    ) ps on true
+    where p.ended_at is null
+      and coalesce(ps.duration_minutes, pt.limit_minutes) is not null
+      and coalesce(ps.duration_minutes, pt.limit_minutes) > 0
+      and extract(epoch from (now() - p.started_at)) > (coalesce(ps.duration_minutes, pt.limit_minutes) * 60)
+  )
+  select a.id as pause_id, a.manager_id
+  from active a
+  where a.manager_id is not null
+  union all
+  select a.id as pause_id, ms.manager_id
+  from active a
+  join public.manager_sectors ms on ms.sector_id = a.team_id
+  join public.profiles pr on pr.id = ms.manager_id and pr.role = 'GERENTE'
+  where a.manager_id is null
+    and a.team_id is not null;
+end;
+$$;
+
 create or replace function public.mark_late_pauses_as_read(
   p_from timestamptz default null
 )
@@ -718,6 +814,59 @@ begin
   return v_count;
 end;
 $$;
+
+create or replace function public.notify_late_pause_push()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_supabase_url text;
+  v_service_role text;
+  v_url text;
+  v_payload jsonb;
+begin
+  select value into v_supabase_url
+  from public.app_settings
+  where key = 'supabase_url'
+  limit 1;
+
+  select value into v_service_role
+  from public.app_settings
+  where key = 'service_role_key'
+  limit 1;
+
+  if v_supabase_url is null or v_supabase_url = '' then
+    return new;
+  end if;
+  if v_service_role is null or v_service_role = '' then
+    return new;
+  end if;
+
+  v_url := v_supabase_url || '/functions/v1/push-late';
+  v_payload := jsonb_build_object(
+    'pause_id', new.pause_id,
+    'manager_id', new.manager_id
+  );
+
+  perform net.http_post(
+    url := v_url,
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'Authorization', 'Bearer ' || v_service_role
+    ),
+    body := v_payload
+  );
+
+  return new;
+end;
+$$;
+
+drop trigger if exists pause_notifications_push on public.pause_notifications;
+create trigger pause_notifications_push
+  after insert on public.pause_notifications
+  for each row execute procedure public.notify_late_pause_push();
 
 create or replace function public.list_agent_logins()
 returns table (
@@ -861,6 +1010,8 @@ alter table public.pause_notifications enable row level security;
 alter table public.pause_schedules enable row level security;
 alter table public.user_sessions enable row level security;
 alter table public.manager_sectors enable row level security;
+alter table public.push_subscriptions enable row level security;
+alter table public.app_settings enable row level security;
 
 -- Profiles policies
 drop policy if exists "Profiles: select own or manager/admin" on public.profiles;
@@ -1185,6 +1336,52 @@ create policy "User sessions: update own/admin"
   on public.user_sessions for update
   using (user_id = auth.uid() or public.is_admin(auth.uid()))
   with check (user_id = auth.uid() or public.is_admin(auth.uid()));
+
+-- Push subscriptions policies
+drop policy if exists "Push subscriptions: select own" on public.push_subscriptions;
+drop policy if exists "Push subscriptions: insert own" on public.push_subscriptions;
+drop policy if exists "Push subscriptions: update own" on public.push_subscriptions;
+drop policy if exists "Push subscriptions: delete own" on public.push_subscriptions;
+
+create policy "Push subscriptions: select own"
+  on public.push_subscriptions for select
+  using (user_id = auth.uid() or public.is_admin(auth.uid()));
+
+create policy "Push subscriptions: insert own"
+  on public.push_subscriptions for insert
+  with check (user_id = auth.uid());
+
+create policy "Push subscriptions: update own"
+  on public.push_subscriptions for update
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+create policy "Push subscriptions: delete own"
+  on public.push_subscriptions for delete
+  using (user_id = auth.uid());
+
+-- App settings policies
+drop policy if exists "App settings: admin select" on public.app_settings;
+drop policy if exists "App settings: admin insert" on public.app_settings;
+drop policy if exists "App settings: admin update" on public.app_settings;
+drop policy if exists "App settings: admin delete" on public.app_settings;
+
+create policy "App settings: admin select"
+  on public.app_settings for select
+  using (public.is_admin(auth.uid()));
+
+create policy "App settings: admin insert"
+  on public.app_settings for insert
+  with check (public.is_admin(auth.uid()));
+
+create policy "App settings: admin update"
+  on public.app_settings for update
+  using (public.is_admin(auth.uid()))
+  with check (public.is_admin(auth.uid()));
+
+create policy "App settings: admin delete"
+  on public.app_settings for delete
+  using (public.is_admin(auth.uid()));
 
 grant execute on function public.start_pause(text) to authenticated;
 grant execute on function public.end_pause(text) to authenticated;

@@ -2,6 +2,7 @@
 import { NavLink, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/useAuth'
 import { getLatePausesSummary, listActiveLatePauses, markAllLatePausesAsRead } from '../services/apiPauses'
+import { savePushSubscription } from '../services/apiPush'
 import { supabase } from '../services/supabaseClient'
 import { formatDateTime, formatDuration, startOfToday } from '../utils/format'
 
@@ -12,8 +13,11 @@ export default function TopNav({ agentControls }) {
   const [lateCount, setLateCount] = useState(0)
   const [bellOpen, setBellOpen] = useState(false)
   const [activeLatePauses, setActiveLatePauses] = useState([])
+  const prevLateIdsRef = useRef(new Set())
   const prevTotalLateRef = useRef(0)
   const prevActiveLateIdsRef = useRef(new Set())
+  const lateInitRef = useRef(false)
+  const activeInitRef = useRef(false)
   const [isDark, setIsDark] = useState(() => {
     if (typeof document === 'undefined') return false
     return document.documentElement.classList.contains('theme-dark')
@@ -31,6 +35,71 @@ export default function TopNav({ agentControls }) {
   const showBell = profile?.role === 'GERENTE'
   const activeLateCount = activeLatePauses.length
   const totalLateCount = lateCount + activeLateCount
+  const notificationsSupported = typeof window !== 'undefined' && 'Notification' in window
+  const notificationIcon = `${import.meta.env.BASE_URL || '/'}logo-odontoart.png`
+  const notificationPermission = notificationsSupported ? Notification.permission : 'unsupported'
+
+  const urlBase64ToUint8Array = (base64String) => {
+    const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
+    const rawData = atob(base64)
+    const outputArray = new Uint8Array(rawData.length)
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i)
+    }
+    return outputArray
+  }
+
+  const requestNotificationPermission = async () => {
+    if (!notificationsSupported) return 'denied'
+    if (Notification.permission === 'default') {
+      try {
+        const result = await Notification.requestPermission()
+        return result
+      } catch (err) {
+        return Notification.permission
+      }
+    }
+    return Notification.permission
+  }
+
+  const ensurePushSubscription = async () => {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+      return
+    }
+    const permission = await requestNotificationPermission()
+    if (permission !== 'granted') return
+
+    const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY
+    if (!vapidKey) {
+      console.warn('[push] VITE_VAPID_PUBLIC_KEY not configured')
+      return
+    }
+
+    const registration = await navigator.serviceWorker.ready
+    let subscription = await registration.pushManager.getSubscription()
+    if (!subscription) {
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapidKey)
+      })
+    }
+    await savePushSubscription(subscription)
+  }
+
+  const notify = (title, body, tag) => {
+    if (!notificationsSupported) return
+    if (Notification.permission !== 'granted') return
+    try {
+      new Notification(title, {
+        body,
+        icon: notificationIcon,
+        tag: tag || title
+      })
+    } catch (err) {
+      console.warn('[notifications] failed to show browser notification', err)
+    }
+  }
 
   const loadLatePauses = async () => {
     try {
@@ -55,6 +124,14 @@ export default function TopNav({ agentControls }) {
     if (!showBell) return
     loadLatePauses()
     loadActiveLatePauses()
+  }, [showBell])
+
+  useEffect(() => {
+    if (!showBell) return
+    if (!notificationsSupported) return
+    if (Notification.permission === 'granted') {
+      ensurePushSubscription()
+    }
   }, [showBell])
 
   useEffect(() => {
@@ -153,18 +230,48 @@ export default function TopNav({ agentControls }) {
   useEffect(() => {
     if (!showBell) return
     const currentIds = new Set(activeLatePauses.map((pause) => pause.pause_id))
+    if (!activeInitRef.current) {
+      activeInitRef.current = true
+      prevActiveLateIdsRef.current = currentIds
+      return
+    }
     const prevIds = prevActiveLateIdsRef.current
-    let hasNew = false
-    currentIds.forEach((id) => {
-      if (!prevIds.has(id)) {
-        hasNew = true
-      }
-    })
-    if (hasNew && currentIds.size > 0) {
+    const newItems = activeLatePauses.filter((pause) => !prevIds.has(pause.pause_id))
+    if (newItems.length) {
       setBellOpen(true)
+      newItems.forEach((pause) => {
+        notify(
+          'Pausa atrasada em andamento',
+          `${pause.agent_name} - ${pause.pause_type_label} • ${formatDuration(pause.elapsed_seconds)} / ${formatDuration(pause.limit_seconds)}`,
+          `late-active-${pause.pause_id}`
+        )
+      })
     }
     prevActiveLateIdsRef.current = currentIds
   }, [showBell, activeLatePauses])
+
+  useEffect(() => {
+    if (!showBell) return
+    const currentIds = new Set(latePauses.map((pause) => pause.pause_id))
+    if (!lateInitRef.current) {
+      lateInitRef.current = true
+      prevLateIdsRef.current = currentIds
+      return
+    }
+    const prevIds = prevLateIdsRef.current
+    const newItems = latePauses.filter((pause) => !prevIds.has(pause.pause_id))
+    if (newItems.length) {
+      setBellOpen(true)
+      newItems.forEach((pause) => {
+        notify(
+          'Pausa atrasada finalizada',
+          `${pause.agent_name} - ${pause.pause_type_label} • ${formatDuration(pause.duration_seconds || 0)} • ${formatDateTime(pause.ended_at)}`,
+          `late-finished-${pause.pause_id}`
+        )
+      })
+    }
+    prevLateIdsRef.current = currentIds
+  }, [showBell, latePauses])
 
   const handleMarkAllAsRead = async () => {
     try {
@@ -249,7 +356,10 @@ export default function TopNav({ agentControls }) {
                   <button
                     type="button"
                     className="btn-ghost relative h-10 w-10 px-0"
-                    onClick={() => setBellOpen((prev) => !prev)}
+                    onClick={() => {
+                      ensurePushSubscription()
+                      setBellOpen((prev) => !prev)
+                    }}
                   >
                     <span className="sr-only">Notificacoes</span>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -346,6 +456,21 @@ export default function TopNav({ agentControls }) {
                 <span className="text-xs text-slate-500">
                   {activeLateCount} em andamento • {lateCount} finalizadas hoje
                 </span>
+                <button
+                  type="button"
+                  className="btn-ghost text-xs"
+                  onClick={ensurePushSubscription}
+                  disabled={!notificationsSupported}
+                  title={
+                    !notificationsSupported
+                      ? 'Navegador nao suporta notificacoes'
+                      : notificationPermission === 'granted'
+                        ? 'Notificacoes ja ativadas'
+                        : 'Ativar notificacoes no navegador'
+                  }
+                >
+                  {notificationPermission === 'granted' ? 'Notificacoes ativas' : 'Ativar notificacoes'}
+                </button>
                 <button
                   type="button"
                   className="btn-ghost text-xs"

@@ -21,6 +21,14 @@ const applyInitialTheme = () => {
 
 applyInitialTheme()
 
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/push-sw.js').catch((err) => {
+      console.warn('[push] failed to register service worker', err)
+    })
+  })
+}
+
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <BrowserRouter>

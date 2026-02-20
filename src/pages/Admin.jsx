@@ -961,7 +961,7 @@ export default function Admin() {
             className={`btn ${tab === 'managers' ? 'bg-brand-600 text-white' : 'btn-ghost'}`}
             onClick={() => setTab('managers')}
           >
-            Gerentes
+            Gestores
           </button>
           <button
             className={`btn ${tab === 'admins' ? 'bg-brand-600 text-white' : 'btn-ghost'}`}
@@ -1024,7 +1024,7 @@ export default function Admin() {
                   />
                 </div>
                 <div>
-                  <label className="label">Role</label>
+                  <label className="label">Funcao</label>
                   <select
                     className="input mt-1"
                     value={userForm.role}
@@ -1047,12 +1047,12 @@ export default function Admin() {
                     }}
                   >
                     <option value="ADMIN">ADMIN</option>
-                    <option value="GERENTE">GERENTE</option>
-                    <option value="AGENTE">AGENTE</option>
+                    <option value="GERENTE">GESTOR</option>
+                    <option value="AGENTE">COLABORADOR</option>
                   </select>
                 </div>
                 <div>
-                  <label className="label">Gerente responsavel</label>
+                  <label className="label">Gestor responsavel</label>
                   <select
                     className="input mt-1"
                     value={userForm.manager_id}
