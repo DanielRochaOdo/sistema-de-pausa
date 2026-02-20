@@ -13,6 +13,7 @@ export default function TopNav({ agentControls }) {
   const [lateCount, setLateCount] = useState(0)
   const [bellOpen, setBellOpen] = useState(false)
   const [activeLatePauses, setActiveLatePauses] = useState([])
+  const [pushReady, setPushReady] = useState(false)
   const prevLateIdsRef = useRef(new Set())
   const prevTotalLateRef = useRef(0)
   const prevActiveLateIdsRef = useRef(new Set())
@@ -65,14 +66,19 @@ export default function TopNav({ agentControls }) {
 
   const ensurePushSubscription = async () => {
     if (typeof navigator === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+      setPushReady(false)
       return
     }
     const permission = await requestNotificationPermission()
-    if (permission !== 'granted') return
+    if (permission !== 'granted') {
+      setPushReady(false)
+      return
+    }
 
     const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY
     if (!vapidKey) {
       console.warn('[push] VITE_VAPID_PUBLIC_KEY not configured')
+      setPushReady(false)
       return
     }
 
@@ -85,6 +91,25 @@ export default function TopNav({ agentControls }) {
       })
     }
     await savePushSubscription(subscription)
+    setPushReady(true)
+  }
+
+  const refreshPushStatus = async () => {
+    if (!notificationsSupported || typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
+      setPushReady(false)
+      return
+    }
+    if (Notification.permission !== 'granted') {
+      setPushReady(false)
+      return
+    }
+    try {
+      const registration = await navigator.serviceWorker.ready
+      const subscription = await registration.pushManager.getSubscription()
+      setPushReady(!!subscription)
+    } catch (err) {
+      setPushReady(false)
+    }
   }
 
   const notify = (title, body, tag) => {
@@ -133,6 +158,11 @@ export default function TopNav({ agentControls }) {
       ensurePushSubscription()
     }
   }, [showBell])
+
+  useEffect(() => {
+    if (!showBell) return
+    refreshPushStatus()
+  }, [showBell, notificationPermission])
 
   useEffect(() => {
     if (!showBell || !profile?.id) return
@@ -228,7 +258,7 @@ export default function TopNav({ agentControls }) {
   }, [showBell, totalLateCount])
 
   useEffect(() => {
-    if (!showBell) return
+    if (!showBell || pushReady) return
     const currentIds = new Set(activeLatePauses.map((pause) => pause.pause_id))
     if (!activeInitRef.current) {
       activeInitRef.current = true
@@ -248,10 +278,10 @@ export default function TopNav({ agentControls }) {
       })
     }
     prevActiveLateIdsRef.current = currentIds
-  }, [showBell, activeLatePauses])
+  }, [showBell, activeLatePauses, pushReady])
 
   useEffect(() => {
-    if (!showBell) return
+    if (!showBell || pushReady) return
     const currentIds = new Set(latePauses.map((pause) => pause.pause_id))
     if (!lateInitRef.current) {
       lateInitRef.current = true
@@ -271,7 +301,7 @@ export default function TopNav({ agentControls }) {
       })
     }
     prevLateIdsRef.current = currentIds
-  }, [showBell, latePauses])
+  }, [showBell, latePauses, pushReady])
 
   const handleMarkAllAsRead = async () => {
     try {

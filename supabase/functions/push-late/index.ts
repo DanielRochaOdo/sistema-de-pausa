@@ -100,17 +100,19 @@ serve(async (req) => {
 
   const agentName = pauseData?.profiles?.full_name || 'Agente'
   const pauseLabel = pauseData?.pause_types?.label || 'Pausa'
+  const isActive = !pauseData?.ended_at
   const durationSeconds =
     pauseData?.duration_seconds ??
     (pauseData?.started_at ? Math.max(0, Math.floor((Date.now() - new Date(pauseData.started_at).getTime()) / 1000)) : 0)
   const endedAt = pauseData?.ended_at ? new Date(pauseData.ended_at).toLocaleString('pt-BR') : ''
 
   const payload = JSON.stringify({
-    title: 'Pausa atrasada',
+    title: isActive ? 'Pausa atrasada em andamento' : 'Pausa atrasada finalizada',
     body: `${agentName} - ${pauseLabel} • ${durationSeconds}s${endedAt ? ` • ${endedAt}` : ''}`,
     url: '/manager',
     icon: '/logo-odontoart.png',
-    badge: '/logo-odontoart.png'
+    badge: '/logo-odontoart.png',
+    tag: `pause-${pauseId}`
   })
 
   let delivered = 0

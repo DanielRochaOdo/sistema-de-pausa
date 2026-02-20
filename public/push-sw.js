@@ -11,6 +11,7 @@ self.addEventListener('push', (event) => {
     body: payload.body || '',
     icon: payload.icon || '/logo-odontoart.png',
     badge: payload.badge || '/logo-odontoart.png',
+    tag: payload.tag || undefined,
     data: {
       url: payload.url || '/'
     }
