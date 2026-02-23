@@ -10,6 +10,7 @@ const SLOW_SESSION_MS = 6000
 const SLOW_PROFILE_MS = 6000
 const SESSION_TIMEOUT_MS = 8000
 const PROFILE_TIMEOUT_MS = 8000
+const MAX_SESSION_AGE_MS = 12 * 60 * 60 * 1000
 
 const readCachedProfile = (userId) => {
   try {
@@ -187,13 +188,17 @@ export function AuthProvider({ children }) {
     }, SLOW_PROFILE_MS)
   }
 
-  const beginSessionTokenRegistration = (token) => {
+  const beginSessionTokenRegistration = (token, loginAt) => {
     if (!token) return
     if (sessionTokenPendingRef.current === token) return
     sessionTokenPendingRef.current = token
     sessionTokenRef.current = null
     writeSessionToken(null)
-    writeSessionLoginAt(null)
+    if (loginAt) {
+      writeSessionLoginAt(loginAt)
+    } else {
+      writeSessionLoginAt(null)
+    }
   }
 
   const finalizeSessionTokenRegistration = (token, loginAt) => {
@@ -203,6 +208,13 @@ export function AuthProvider({ children }) {
     if (loginAt) {
       writeSessionLoginAt(loginAt)
     }
+  }
+
+  const isSessionExpired = (loginAt) => {
+    if (!loginAt) return false
+    const loginTime = new Date(loginAt).getTime()
+    if (Number.isNaN(loginTime)) return false
+    return Date.now() - loginTime > MAX_SESSION_AGE_MS
   }
 
   const loadProfile = async (userId) => {
@@ -390,6 +402,16 @@ export function AuthProvider({ children }) {
     const cachedSession = readCachedSession()
     const cachedUserId = cachedSession?.user?.id || null
     const cachedProfile = cachedUserId ? readCachedProfile(cachedUserId) : null
+    const cachedLoginAt = readSessionLoginAt()
+
+    if (cachedSession && isSessionExpired(cachedLoginAt)) {
+      console.info('[auth] session expired by max age')
+      sessionRef.current = cachedSession
+      sessionTokenRef.current = readSessionToken()
+      await signOut()
+      setLoading(false)
+      return
+    }
 
     if (cachedSession) {
       setSession(cachedSession)
@@ -484,6 +506,13 @@ export function AuthProvider({ children }) {
 
       try {
         const nextUserId = nextSession?.user?.id || null
+        const loginAt = readSessionLoginAt()
+        if (nextSession && isSessionExpired(loginAt)) {
+          console.info('[auth] session expired by max age (auth state)')
+          await signOut()
+          return
+        }
+
         setSession(nextSession)
 
         if (!nextUserId) {
@@ -710,8 +739,9 @@ export function AuthProvider({ children }) {
       const userId = currentSession?.user?.id || null
       let pendingToken = null
       if (userId) {
+        const loginAt = new Date().toISOString()
         pendingToken = createSessionToken()
-        beginSessionTokenRegistration(pendingToken)
+        beginSessionTokenRegistration(pendingToken, loginAt)
       }
       setSession(currentSession)
       if (userId) {
