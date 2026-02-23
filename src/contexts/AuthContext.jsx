@@ -134,6 +134,7 @@ export function AuthProvider({ children }) {
   const sessionRef = useRef(null)
   const errorRef = useRef(null)
   const sessionTokenRef = useRef(null)
+  const sessionTokenPendingRef = useRef(null)
   const forcedSignOutRef = useRef(false)
   const sessionGuardBusyRef = useRef(false)
   const profileRequestIdRef = useRef(0)
@@ -184,6 +185,24 @@ export function AuthProvider({ children }) {
       console.info('[auth] slowProfile true after 6s')
       setSlowProfile(true)
     }, SLOW_PROFILE_MS)
+  }
+
+  const beginSessionTokenRegistration = (token) => {
+    if (!token) return
+    if (sessionTokenPendingRef.current === token) return
+    sessionTokenPendingRef.current = token
+    sessionTokenRef.current = null
+    writeSessionToken(null)
+    writeSessionLoginAt(null)
+  }
+
+  const finalizeSessionTokenRegistration = (token, loginAt) => {
+    sessionTokenPendingRef.current = null
+    sessionTokenRef.current = token || null
+    writeSessionToken(token || null)
+    if (loginAt) {
+      writeSessionLoginAt(loginAt)
+    }
   }
 
   const loadProfile = async (userId) => {
@@ -279,6 +298,8 @@ export function AuthProvider({ children }) {
   }
 
   const ensureSessionToken = async (userId) => {
+    const pending = sessionTokenPendingRef.current
+    if (pending) return pending
     const existing = sessionTokenRef.current || readSessionToken()
     if (existing) {
       sessionTokenRef.current = existing
@@ -308,10 +329,12 @@ export function AuthProvider({ children }) {
     return null
   }
 
-  const registerSession = async (userId, { closeOthers = true } = {}) => {
+  const registerSession = async (userId, { closeOthers = true, token: forcedToken } = {}) => {
     if (!userId) return null
-    const token = createSessionToken()
+    const token = forcedToken || createSessionToken()
     const nowIso = new Date().toISOString()
+
+    beginSessionTokenRegistration(token)
 
     if (closeOthers) {
       await supabase
@@ -336,10 +359,9 @@ export function AuthProvider({ children }) {
       if (error) throw error
 
       const storedToken = data?.session_token || token
-      sessionTokenRef.current = storedToken
-      writeSessionToken(storedToken)
-      if (data?.login_at) writeSessionLoginAt(data.login_at)
-      return { token: storedToken, login_at: data?.login_at || nowIso }
+      const loginAt = data?.login_at || nowIso
+      finalizeSessionTokenRegistration(storedToken, loginAt)
+      return { token: storedToken, login_at: loginAt }
     } catch (err) {
       const message = String(err?.message || err)
       if (message.includes('session_token') && message.includes('does not exist')) {
@@ -353,11 +375,10 @@ export function AuthProvider({ children }) {
           .select('login_at')
           .single()
         if (error) throw error
-        writeSessionLoginAt(data?.login_at || nowIso)
-        sessionTokenRef.current = null
-        writeSessionToken(null)
+        finalizeSessionTokenRegistration(null, data?.login_at || nowIso)
         return { token: null, login_at: data?.login_at || nowIso }
       }
+      finalizeSessionTokenRegistration(null, null)
       throw err
     }
   }
@@ -470,6 +491,7 @@ export function AuthProvider({ children }) {
           writeCachedProfile(null)
           setProfileFetched(false)
           lastProfileUserIdRef.current = null
+          sessionTokenPendingRef.current = null
           writeSessionToken(null)
           writeSessionLoginAt(null)
           sessionTokenRef.current = null
@@ -534,8 +556,10 @@ export function AuthProvider({ children }) {
             filter: `user_id=eq.${userId}`
           },
           (payload) => {
-            const token = sessionTokenRef.current
-            if (!token || forcedSignOutRef.current) return
+            if (forcedSignOutRef.current) return
+            if (sessionTokenPendingRef.current) return
+            const token = sessionTokenRef.current || readSessionToken()
+            if (!token) return
 
             if (payload.eventType === 'INSERT') {
               if (payload.new?.session_token && payload.new.session_token !== token) {
@@ -582,6 +606,7 @@ export function AuthProvider({ children }) {
 
     const checkLatestSession = async () => {
       if (!alive || sessionGuardBusyRef.current || forcedSignOutRef.current) return
+      if (sessionTokenPendingRef.current) return
       sessionGuardBusyRef.current = true
       try {
         const { data, error } = await supabase
@@ -682,11 +707,16 @@ export function AuthProvider({ children }) {
       }
 
       const currentSession = data?.session ?? null
-      setSession(currentSession)
       const userId = currentSession?.user?.id || null
+      let pendingToken = null
+      if (userId) {
+        pendingToken = createSessionToken()
+        beginSessionTokenRegistration(pendingToken)
+      }
+      setSession(currentSession)
       if (userId) {
         try {
-          await registerSession(userId, { closeOthers: true })
+          await registerSession(userId, { closeOthers: true, token: pendingToken })
         } catch (sessionErr) {
           console.warn('[auth] failed to register session', sessionErr)
         }
@@ -725,7 +755,11 @@ export function AuthProvider({ children }) {
     } catch (sessionErr) {
       console.warn('[auth] failed to close session', sessionErr)
     }
-    await supabase.auth.signOut()
+    try {
+      await supabase.auth.signOut()
+    } catch (signOutErr) {
+      console.warn('[auth] failed to sign out', signOutErr)
+    }
     setSession(null)
     setProfile(null)
     setProfileFetched(false)
@@ -737,6 +771,7 @@ export function AuthProvider({ children }) {
     writeSessionToken(null)
     writeSessionLoginAt(null)
     sessionTokenRef.current = null
+    sessionTokenPendingRef.current = null
     forcedSignOutRef.current = false
   }
 
