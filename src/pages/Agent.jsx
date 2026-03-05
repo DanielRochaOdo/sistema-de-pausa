@@ -82,7 +82,7 @@ const writeNotificationPref = (value) => {
 export default function Agent() {
   const { profile } = useAuth()
   const notificationsSupported = typeof window !== 'undefined' && 'Notification' in window
-  const notificationIcon = `${import.meta.env.BASE_URL || '/'}logo-odontoart.png`
+  const notificationIcon = `${import.meta.env.BASE_URL || '/'}logo-odontoart-notification.png`
   const [notificationPermission, setNotificationPermission] = useState(() =>
     notificationsSupported ? Notification.permission : 'unsupported'
   )

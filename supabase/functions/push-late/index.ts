@@ -23,6 +23,13 @@ const jsonResponse = (status: number, body: unknown) =>
     headers: { ...corsHeaders, 'Content-Type': 'application/json' }
   })
 
+const formatMmSs = (totalSeconds: number) => {
+  const safeSeconds = Math.max(0, Math.floor(totalSeconds))
+  const minutes = Math.floor(safeSeconds / 60)
+  const seconds = String(safeSeconds % 60).padStart(2, '0')
+  return `${String(minutes).padStart(2, '0')}:${seconds}`
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders, status: 204 })
@@ -108,10 +115,10 @@ serve(async (req) => {
 
   const payload = JSON.stringify({
     title: isActive ? 'Pausa atrasada em andamento' : 'Pausa atrasada finalizada',
-    body: `${agentName} - ${pauseLabel} • ${durationSeconds}s${endedAt ? ` • ${endedAt}` : ''}`,
+    body: `${agentName} - ${pauseLabel} - ${formatMmSs(durationSeconds)}${endedAt ? ` - ${endedAt}` : ""}`,
     url: '/manager',
-    icon: '/logo-odontoart.png',
-    badge: '/logo-odontoart.png',
+    icon: '/logo-odontoart-notification.png',
+    badge: '/logo-odontoart-notification.png',
     tag: `pause-${pauseId}`
   })
 

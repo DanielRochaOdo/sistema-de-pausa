@@ -9,8 +9,8 @@ self.addEventListener('push', (event) => {
   const title = payload.title || 'Notificacao'
   const options = {
     body: payload.body || '',
-    icon: payload.icon || '/logo-odontoart.png',
-    badge: payload.badge || '/logo-odontoart.png',
+    icon: payload.icon || '/logo-odontoart-notification.png',
+    badge: payload.badge || '/logo-odontoart-notification.png',
     tag: payload.tag || undefined,
     data: {
       url: payload.url || '/'

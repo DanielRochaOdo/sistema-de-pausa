@@ -41,7 +41,7 @@ export default function TopNav({ agentControls, agentNotificationAction }) {
   const activeLateCount = activeLatePauses.length
   const totalLateCount = lateCount + activeLateCount
   const notificationsSupported = typeof window !== 'undefined' && 'Notification' in window
-  const notificationIcon = `${import.meta.env.BASE_URL || '/'}logo-odontoart.png`
+  const notificationIcon = `${import.meta.env.BASE_URL || '/'}logo-odontoart-notification.png`
   const notificationPermission = notificationsSupported ? Notification.permission : 'unsupported'
 
   const urlBase64ToUint8Array = (base64String) => {
