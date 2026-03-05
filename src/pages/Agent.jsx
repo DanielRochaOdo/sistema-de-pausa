@@ -110,6 +110,10 @@ export default function Agent() {
   const alertedScheduleIdsRef = useRef(new Set())
   const scheduleAlertNotifiedRef = useRef(new Set())
   const alertDayKeyRef = useRef(getLocalDateKey())
+  const syncNotificationPermission = useCallback(() => {
+    if (!notificationsSupported) return
+    setNotificationPermission(Notification.permission)
+  }, [notificationsSupported])
 
   const loadSchedules = async (userId) => {
     if (!userId) return
@@ -197,7 +201,7 @@ export default function Agent() {
 
   useEffect(() => {
     if (!notificationsSupported) return
-    setNotificationPermission(Notification.permission)
+    syncNotificationPermission()
     if (!navigator.permissions?.query) return
     let active = true
     let status
@@ -206,9 +210,9 @@ export default function Agent() {
       .then((result) => {
         if (!active) return
         status = result
-        setNotificationPermission(result.state)
+        syncNotificationPermission()
         result.onchange = () => {
-          setNotificationPermission(result.state)
+          syncNotificationPermission()
         }
       })
       .catch(() => {
@@ -218,7 +222,7 @@ export default function Agent() {
       active = false
       if (status) status.onchange = null
     }
-  }, [notificationsSupported])
+  }, [notificationsSupported, syncNotificationPermission])
 
   useEffect(() => {
     const dayKey = getLocalDateKey()
