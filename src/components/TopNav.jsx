@@ -6,7 +6,7 @@ import { savePushSubscription } from '../services/apiPush'
 import { supabase } from '../services/supabaseClient'
 import { formatDateTime, formatDuration, startOfToday } from '../utils/format'
 
-export default function TopNav({ agentControls }) {
+export default function TopNav({ agentControls, agentNotificationAction }) {
   const { profile, signOut } = useAuth()
   const location = useLocation()
   const [latePauses, setLatePauses] = useState([])
@@ -29,11 +29,15 @@ export default function TopNav({ agentControls }) {
   const showAdmin = profile?.role === 'ADMIN'
   const isAdminScreen = location?.pathname?.startsWith('/admin')
   const isAdminLike = profile?.role === 'ADMIN' || profile?.is_admin
-  const showAdminPanel = profile?.role === 'GERENTE' && profile?.is_admin && !isAdminScreen
-  const showManagerPanel = isAdminScreen && isAdminLike
+  const showPanelSwitch = isAdminLike
+  const panelSwitchTarget = isAdminScreen ? '/manager' : '/admin'
+  const panelSwitchLabel = isAdminScreen ? 'Painel Gestor' : 'Painel Admin'
+  const adminLinkLabel = 'Sistema'
   const showDashboard = showManager && !isAdminScreen
   const reportsLink = isAdminScreen && isAdminLike ? '/admin/reports' : '/reports'
-  const showBell = profile?.role === 'GERENTE'
+  const showBell = profile?.role === 'GERENTE' && !isAdminScreen
+  const showManagerTools = showDashboard || showBell
+  const showAdminLink = showAdmin && isAdminScreen
   const activeLateCount = activeLatePauses.length
   const totalLateCount = lateCount + activeLateCount
   const notificationsSupported = typeof window !== 'undefined' && 'Notification' in window
@@ -337,6 +341,16 @@ export default function TopNav({ agentControls }) {
             <span className="chip mt-2">{profile?.role || 'Sem role'}</span>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {showPanelSwitch ? (
+              <NavLink
+                to={panelSwitchTarget}
+                className={({ isActive }) =>
+                  `btn h-10 ${isActive ? 'bg-brand-600 text-white' : 'btn-ghost text-slate-700'}`
+                }
+              >
+                {panelSwitchLabel}
+              </NavLink>
+            ) : null}
             {showAgent ? (
               <div className="flex flex-wrap items-center gap-2">
                 {agentControls ? agentControls : null}
@@ -350,28 +364,8 @@ export default function TopNav({ agentControls }) {
                 </NavLink>
               </div>
             ) : null}
-            {showManager ? (
+            {showManagerTools ? (
               <div className="flex items-center gap-2">
-                {showManagerPanel ? (
-                  <NavLink
-                    to="/manager"
-                    className={({ isActive }) =>
-                      `btn h-10 ${isActive ? 'bg-brand-600 text-white' : 'btn-ghost text-slate-700'}`
-                    }
-                  >
-                    Painel Gerente
-                  </NavLink>
-                ) : null}
-                {showAdminPanel ? (
-                  <NavLink
-                    to="/admin"
-                    className={({ isActive }) =>
-                      `btn h-10 ${isActive ? 'bg-brand-600 text-white' : 'btn-ghost text-slate-700'}`
-                    }
-                  >
-                    Painel Admin
-                  </NavLink>
-                ) : null}
                 {showDashboard ? (
                   <NavLink
                     to="/manager"
@@ -427,14 +421,14 @@ export default function TopNav({ agentControls }) {
                 Relatorios
               </NavLink>
             ) : null}
-            {showAdmin ? (
+            {showAdminLink ? (
               <NavLink
                 to="/admin"
                 className={({ isActive }) =>
                   `btn h-10 ${isActive ? 'bg-brand-600 text-white' : 'btn-ghost text-slate-700'}`
                 }
               >
-                Admin
+                {adminLinkLabel}
               </NavLink>
             ) : null}
             <button
@@ -472,6 +466,7 @@ export default function TopNav({ agentControls }) {
                 </>
               )}
             </button>
+            {agentNotificationAction ? agentNotificationAction : null}
             <button type="button" onClick={signOut} className="btn-secondary h-10">
               Sair
             </button>
