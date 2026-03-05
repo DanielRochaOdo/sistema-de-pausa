@@ -87,7 +87,16 @@ export default function Agent() {
     notificationsSupported ? Notification.permission : 'unsupported'
   )
   const [notificationPref, setNotificationPref] = useState(() => readNotificationPref())
-  const notificationsEnabled = notificationPermission === 'granted' && notificationPref !== 'off'
+  const resolvedPermission = useMemo(() => {
+    if (!notificationsSupported) return 'unsupported'
+    const live = Notification.permission
+    if (live === 'granted' || live === 'denied') return live
+    if (notificationPermission === 'granted' || notificationPermission === 'denied') {
+      return notificationPermission
+    }
+    return 'default'
+  }, [notificationsSupported, notificationPermission])
+  const notificationsEnabled = resolvedPermission === 'granted' && notificationPref !== 'off'
   const persistNotificationPref = (nextPref) => {
     setNotificationPref(nextPref)
     writeNotificationPref(nextPref)
@@ -260,7 +269,7 @@ export default function Agent() {
   const showBasicNotification = useCallback(
     (title, body) => {
       if (!notificationsSupported) return
-      if (Notification.permission !== 'granted') return
+      if (resolvedPermission !== 'granted') return
       try {
         new Notification(title, {
           body,
@@ -270,7 +279,7 @@ export default function Agent() {
         console.warn('[agent] failed to show notification', err)
       }
     },
-    [notificationsSupported, notificationIcon]
+    [notificationsSupported, notificationIcon, resolvedPermission]
   )
 
   const showScheduleNotification = useCallback(
@@ -278,7 +287,7 @@ export default function Agent() {
       if (!schedule) return
       const label = schedule.pause_types?.label || 'Pausa programada'
       const time = normalizeTime(schedule.scheduled_time)
-      showBasicNotification('Horario de pausa', `${label} • ${time}`)
+      showBasicNotification('Horario de pausa', `${label} - ${time}`)
     },
     [showBasicNotification]
   )
@@ -382,7 +391,7 @@ export default function Agent() {
   const activeLabel = activePause?.pause_types?.label || 'Em pausa'
   const handleNotificationAction = async () => {
     if (!notificationsSupported) return
-    if (notificationPermission === 'default') {
+    if (resolvedPermission === 'default') {
       const result = await requestNotificationPermission()
       if (result === 'granted') {
         persistNotificationPref('on')
@@ -400,7 +409,7 @@ export default function Agent() {
       }
       return
     }
-    if (notificationPermission === 'granted') {
+    if (resolvedPermission === 'granted') {
       if (notificationsEnabled) {
         persistNotificationPref('off')
       } else {
@@ -422,18 +431,18 @@ export default function Agent() {
   }
   const notificationTone = !notificationsSupported
     ? 'text-slate-400'
-    : notificationPermission === 'denied'
+    : resolvedPermission === 'denied'
       ? 'text-slate-400'
-      : notificationPermission === 'default'
+      : resolvedPermission === 'default'
         ? 'text-amber-600'
         : notificationsEnabled
           ? 'text-emerald-600'
           : 'text-slate-400'
   const notificationTitle = !notificationsSupported
     ? 'Notificacoes indisponiveis'
-    : notificationPermission === 'denied'
+    : resolvedPermission === 'denied'
       ? 'Notificacoes bloqueadas (clique para ver como ativar)'
-      : notificationPermission === 'default'
+      : resolvedPermission === 'default'
         ? 'Ativar notificacoes'
         : notificationsEnabled
           ? 'Notificacoes ativas (clique para desativar)'
