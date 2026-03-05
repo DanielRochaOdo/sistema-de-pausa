@@ -331,6 +331,59 @@ export default function TopNav({ agentControls, agentNotificationAction }) {
     })
   }
 
+  const handleClearCache = async () => {
+    if (typeof window === 'undefined') return
+    const confirmed = window.confirm(
+      'Deslogar e limpar dados locais deste site? Isso encerra sua sessao e afeta outras abas.'
+    )
+    if (!confirmed) return
+
+    try {
+      sessionStorage.clear()
+    } catch (err) {
+      console.warn('[cache] failed to clear sessionStorage', err)
+    }
+
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const keys = Object.keys(localStorage)
+        keys.forEach((key) => {
+          if (key.startsWith('pause-control.') || key === 'theme') {
+            localStorage.removeItem(key)
+          }
+        })
+      }
+    } catch (err) {
+      console.warn('[cache] failed to clear localStorage keys', err)
+    }
+
+    try {
+      if ('caches' in window) {
+        const keys = await caches.keys()
+        await Promise.all(keys.map((key) => caches.delete(key)))
+      }
+    } catch (err) {
+      console.warn('[cache] failed to clear cache storage', err)
+    }
+
+    try {
+      if ('serviceWorker' in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations()
+        await Promise.all(registrations.map((registration) => registration.unregister()))
+      }
+    } catch (err) {
+      console.warn('[cache] failed to unregister service workers', err)
+    }
+
+    try {
+      await signOut()
+    } catch (err) {
+      console.warn('[cache] failed to sign out', err)
+    }
+
+    window.location.reload()
+  }
+
   return (
     <div className="px-6 py-5">
       <div className="card">
@@ -433,42 +486,89 @@ export default function TopNav({ agentControls, agentNotificationAction }) {
             ) : null}
             <button
               type="button"
+              onClick={handleClearCache}
+              className="btn-ghost h-10 w-10 px-0 text-slate-700"
+              aria-label="Deslogar e limpar dados"
+              title="Deslogar e limpar dados do site"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M21 12a9 9 0 10-2.64 6.36"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M21 5v7h-7"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+            <button
+              type="button"
               onClick={handleToggleTheme}
-              className="btn-ghost h-10 text-slate-700"
+              className="btn-ghost h-10 w-10 px-0 text-slate-700"
               aria-pressed={isDark}
               aria-label={isDark ? 'Alternar para tema claro' : 'Alternar para tema escuro'}
+              title={isDark ? 'Tema claro' : 'Tema escuro'}
             >
               {isDark ? (
-                <>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path
-                      d="M12 3v2.5M12 18.5V21M4.22 4.22l1.77 1.77M18.01 18.01l1.77 1.77M3 12h2.5M18.5 12H21M4.22 19.78l1.77-1.77M18.01 5.99l1.77-1.77M16 12a4 4 0 11-8 0 4 4 0 018 0z"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                  <span>Tema claro</span>
-                </>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M12 3v2.5M12 18.5V21M4.22 4.22l1.77 1.77M18.01 18.01l1.77 1.77M3 12h2.5M18.5 12H21M4.22 19.78l1.77-1.77M18.01 5.99l1.77-1.77M16 12a4 4 0 11-8 0 4 4 0 018 0z"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
               ) : (
-                <>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path
-                      d="M21 14.5A8.5 8.5 0 119.5 3a6.5 6.5 0 0011.5 11.5z"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                  <span>Tema escuro</span>
-                </>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M21 14.5A8.5 8.5 0 119.5 3a6.5 6.5 0 0011.5 11.5z"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
               )}
             </button>
             {agentNotificationAction ? agentNotificationAction : null}
-            <button type="button" onClick={signOut} className="btn-secondary h-10">
-              Sair
+            <button
+              type="button"
+              onClick={signOut}
+              className="btn-secondary h-10 w-10 px-0"
+              aria-label="Sair"
+              title="Sair"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M15 3h3a3 3 0 013 3v12a3 3 0 01-3 3h-3"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M10 17l5-5-5-5"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M15 12H3"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
             </button>
           </div>
         </div>
