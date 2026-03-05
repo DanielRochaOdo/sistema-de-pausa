@@ -32,3 +32,29 @@ export async function listActiveAgentSessions({ managerId = null, restrictToMana
   if (error) throw error
   return (data || []).filter((row) => row.profiles?.role === 'AGENTE')
 }
+
+export async function forceLogoutSessionsByUserIds(userIds) {
+  if (!Array.isArray(userIds) || userIds.length === 0) {
+    throw new Error('Selecione ao menos um usuario.')
+  }
+  const nowIso = new Date().toISOString()
+  const { data, error } = await supabase
+    .from('user_sessions')
+    .update({ logout_at: nowIso })
+    .in('user_id', userIds)
+    .is('logout_at', null)
+    .select('id')
+  if (error) throw error
+  return (data || []).length
+}
+
+export async function forceLogoutAllSessions() {
+  const nowIso = new Date().toISOString()
+  const { data, error } = await supabase
+    .from('user_sessions')
+    .update({ logout_at: nowIso })
+    .is('logout_at', null)
+    .select('id')
+  if (error) throw error
+  return (data || []).length
+}

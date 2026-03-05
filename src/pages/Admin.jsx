@@ -19,6 +19,7 @@ import {
   updateSector
 } from '../services/apiAdmin'
 import { listPauseSchedules, upsertPauseSchedule, deletePauseSchedule } from '../services/apiPauses'
+import { forceLogoutAllSessions, forceLogoutSessionsByUserIds } from '../services/apiSessions'
 
 const emptyUserForm = {
   email: '',
@@ -133,6 +134,9 @@ export default function Admin() {
     full_name: '',
     email: ''
   })
+  const [logoutUserId, setLogoutUserId] = useState('')
+  const [logoutSectorId, setLogoutSectorId] = useState('')
+  const [logoutBusy, setLogoutBusy] = useState(false)
 
   const normalizeEmail = (value) => String(value || '').trim().toLowerCase()
   const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(value))
@@ -529,6 +533,76 @@ export default function Admin() {
     }
   }
 
+  const handleLogoutUser = async () => {
+    if (!logoutUserId) return
+    const target = profiles.find((profile) => profile.id === logoutUserId)
+    if (!target) {
+      setError('Usuario nao encontrado.')
+      return
+    }
+    const confirmed = window.confirm(
+      `Deslogar ${target.full_name || 'usuario'}? Isso encerra todas as sessoes ativas deste usuario.`
+    )
+    if (!confirmed) return
+    setError('')
+    setSuccess('')
+    setLogoutBusy(true)
+    try {
+      const count = await forceLogoutSessionsByUserIds([logoutUserId])
+      setSuccess(
+        `Sessoes encerradas para ${target.full_name || 'usuario'} (${count} sessao(oes) atualizada(s)).`
+      )
+    } catch (err) {
+      setError(err.message || 'Falha ao deslogar usuario')
+    } finally {
+      setLogoutBusy(false)
+    }
+  }
+
+  const handleLogoutSector = async () => {
+    if (!logoutSectorId) return
+    const sector = sectors.find((item) => item.id === logoutSectorId)
+    const label = sector?.label || 'setor'
+    const userIds = profiles.filter((profile) => profile.team_id === logoutSectorId).map((profile) => profile.id)
+    if (!userIds.length) {
+      setError('Nenhum usuario encontrado neste setor.')
+      return
+    }
+    const confirmed = window.confirm(
+      `Deslogar todos do setor ${label}? Isso encerra todas as sessoes ativas desses usuarios.`
+    )
+    if (!confirmed) return
+    setError('')
+    setSuccess('')
+    setLogoutBusy(true)
+    try {
+      const count = await forceLogoutSessionsByUserIds(userIds)
+      setSuccess(`Sessoes encerradas no setor ${label} (${count} sessao(oes) atualizada(s)).`)
+    } catch (err) {
+      setError(err.message || 'Falha ao deslogar setor')
+    } finally {
+      setLogoutBusy(false)
+    }
+  }
+
+  const handleLogoutAll = async () => {
+    const confirmed = window.confirm(
+      'Deslogar TODOS os acessos? Isso encerra todas as sessoes ativas, inclusive a sua.'
+    )
+    if (!confirmed) return
+    setError('')
+    setSuccess('')
+    setLogoutBusy(true)
+    try {
+      const count = await forceLogoutAllSessions()
+      setSuccess(`Sessoes encerradas (${count} sessao(oes) atualizada(s)).`)
+    } catch (err) {
+      setError(err.message || 'Falha ao deslogar todos os acessos')
+    } finally {
+      setLogoutBusy(false)
+    }
+  }
+
   const updateProfileField = (id, field, value) => {
     setProfiles((prev) =>
       prev.map((profile) => {
@@ -567,6 +641,11 @@ export default function Admin() {
   }
 
   const agents = useMemo(() => profiles.filter((profile) => profile.role === 'AGENTE'), [profiles])
+  const sortedAllProfiles = useMemo(() => {
+    const list = [...profiles]
+    list.sort((a, b) => (a.full_name || '').localeCompare(b.full_name || ''))
+    return list
+  }, [profiles])
   const getManagerSectorIds = (managerId, fallbackTeamId) => {
     const ids = managerSectorsMap[managerId]
     if (ids && ids.length) return ids
@@ -968,6 +1047,12 @@ export default function Admin() {
             onClick={() => setTab('admins')}
           >
             Admins
+          </button>
+          <button
+            className={`btn ${tab === 'sessions' ? 'bg-brand-600 text-white' : 'btn-ghost'}`}
+            onClick={() => setTab('sessions')}
+          >
+            Sessoes
           </button>
           <button
             className={`btn ${tab === 'sectors' ? 'bg-brand-600 text-white' : 'btn-ghost'}`}
@@ -2001,6 +2086,87 @@ export default function Admin() {
                 {!profiles.filter((profile) => profile.role === 'ADMIN').length ? (
                   <p className="text-sm text-slate-500">Nenhum admin cadastrado.</p>
                 ) : null}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {tab === 'sessions' ? (
+          <div className="grid gap-6 lg:grid-cols-[2fr_2fr_2fr]">
+            <div className="card">
+              <h2 className="font-display text-xl font-semibold text-slate-900">Deslogar usuario</h2>
+              <p className="text-sm text-slate-600 mt-1">Encerra todas as sessoes ativas do usuario.</p>
+              <div className="mt-4 space-y-3">
+                <div>
+                  <label className="label">Usuario</label>
+                  <select
+                    className="input mt-1"
+                    value={logoutUserId}
+                    onChange={(e) => setLogoutUserId(e.target.value)}
+                  >
+                    <option value="">Selecione</option>
+                    {sortedAllProfiles.map((profile) => (
+                      <option key={profile.id} value={profile.id}>
+                        {profile.full_name || 'Usuario'} - {profile.role}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  className="btn-primary w-full"
+                  type="button"
+                  onClick={handleLogoutUser}
+                  disabled={!logoutUserId || logoutBusy}
+                >
+                  {logoutBusy ? 'Processando...' : 'Deslogar usuario'}
+                </button>
+              </div>
+            </div>
+
+            <div className="card">
+              <h2 className="font-display text-xl font-semibold text-slate-900">Deslogar setor</h2>
+              <p className="text-sm text-slate-600 mt-1">Encerra as sessoes ativas de todos no setor.</p>
+              <div className="mt-4 space-y-3">
+                <div>
+                  <label className="label">Setor</label>
+                  <select
+                    className="input mt-1"
+                    value={logoutSectorId}
+                    onChange={(e) => setLogoutSectorId(e.target.value)}
+                  >
+                    <option value="">Selecione</option>
+                    {sectors.map((sector) => (
+                      <option key={sector.id} value={sector.id}>
+                        {sector.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  className="btn-primary w-full"
+                  type="button"
+                  onClick={handleLogoutSector}
+                  disabled={!logoutSectorId || logoutBusy}
+                >
+                  {logoutBusy ? 'Processando...' : 'Deslogar setor'}
+                </button>
+              </div>
+            </div>
+
+            <div className="card border-red-200 bg-red-50">
+              <h2 className="font-display text-xl font-semibold text-red-700">Deslogar todos</h2>
+              <p className="text-sm text-red-700/80 mt-1">
+                Encerra todas as sessoes ativas, inclusive a sua.
+              </p>
+              <div className="mt-4">
+                <button
+                  className="btn-secondary w-full"
+                  type="button"
+                  onClick={handleLogoutAll}
+                  disabled={logoutBusy}
+                >
+                  {logoutBusy ? 'Processando...' : 'Deslogar todos os acessos'}
+                </button>
               </div>
             </div>
           </div>
