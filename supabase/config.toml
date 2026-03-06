@@ -40,3 +40,6 @@ verify_jwt = false
 
 [functions.resolve-login]
 verify_jwt = false
+
+[functions.sip-call-webhook]
+verify_jwt = false

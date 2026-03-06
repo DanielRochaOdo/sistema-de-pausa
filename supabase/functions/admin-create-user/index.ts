@@ -48,12 +48,16 @@ serve(async (req) => {
   }
 
   let isAdmin = false
+  let requesterRole = ''
   const appRole = authData.user?.app_metadata?.role
-  if (typeof appRole === 'string' && appRole.toUpperCase() === 'ADMIN') {
-    isAdmin = true
+  if (typeof appRole === 'string') {
+    requesterRole = appRole.toUpperCase()
+    if (requesterRole === 'ADMIN') {
+      isAdmin = true
+    }
   }
 
-  if (!isAdmin) {
+  if (!isAdmin || !requesterRole) {
     const { data: profile, error: profileError } = await userClient
       .from('profiles')
       .select('role, is_admin')
@@ -62,11 +66,14 @@ serve(async (req) => {
     if (!profileError) {
       const normalizedProfileRole =
         typeof profile?.role === 'string' ? profile.role.toUpperCase() : ''
+      requesterRole = normalizedProfileRole || requesterRole
       isAdmin = normalizedProfileRole === 'ADMIN' || profile?.is_admin === true
     }
   }
 
-  if (!isAdmin) {
+  const isSipManager = requesterRole === 'GESTOR_SIP'
+
+  if (!isAdmin && !isSipManager) {
     return jsonResponse(403, { error: 'Forbidden' })
   }
 
@@ -75,16 +82,39 @@ serve(async (req) => {
     return jsonResponse(400, { error: 'Invalid JSON body' })
   }
 
-  const { email, password, full_name, role, manager_id, team_id, sector_ids } =
+  const {
+    email,
+    password,
+    full_name,
+    role,
+    manager_id,
+    team_id,
+    sector_ids,
+    sip_queue_ids,
+    sip_default_extension
+  } =
     body as Record<string, unknown>
 
   if (!email || !password || !full_name || !role) {
     return jsonResponse(400, { error: 'Missing required fields' })
   }
 
-  const allowedRoles = ['ADMIN', 'GERENTE', 'AGENTE']
-  if (typeof role !== 'string' || !allowedRoles.includes(role)) {
+  const normalizedRole = typeof role === 'string' ? role.toUpperCase() : ''
+  const allowedRoles = ['ADMIN', 'GERENTE', 'AGENTE', 'GESTOR_SIP', 'AGENTE_SIP']
+  if (!allowedRoles.includes(normalizedRole)) {
     return jsonResponse(400, { error: 'Invalid role' })
+  }
+
+  if (isSipManager && normalizedRole !== 'AGENTE_SIP') {
+    return jsonResponse(403, { error: 'Gestor SIP pode criar apenas AGENTE_SIP' })
+  }
+
+  if (normalizedRole === 'GESTOR_SIP' && requesterRole !== 'ADMIN') {
+    return jsonResponse(403, { error: 'Apenas usuarios com role ADMIN podem criar GESTOR_SIP' })
+  }
+
+  if (normalizedRole === 'AGENTE_SIP' && !['ADMIN', 'GESTOR_SIP'].includes(requesterRole)) {
+    return jsonResponse(403, { error: 'Sem permissao para criar AGENTE_SIP' })
   }
 
   const adminClient = createClient(supabaseUrl, supabaseServiceRoleKey)
@@ -94,9 +124,17 @@ serve(async (req) => {
   const providedSectorIds = Array.isArray(sector_ids)
     ? sector_ids.filter((id) => typeof id === 'string' && id)
     : []
+  const providedSipQueueIds = Array.isArray(sip_queue_ids)
+    ? sip_queue_ids.filter((id) => typeof id === 'string' && id)
+    : []
+  const resolvedSipQueueIds = Array.from(new Set(providedSipQueueIds))
+  const normalizedSipDefaultExtension =
+    typeof sip_default_extension === 'string' && sip_default_extension.trim()
+      ? sip_default_extension.trim()
+      : null
   let resolvedTeamId = providedTeamId
 
-  if (role === 'AGENTE') {
+  if (normalizedRole === 'AGENTE') {
     if (!normalizedManagerId) {
       return jsonResponse(400, { error: 'Manager is required for agents' })
     }
@@ -129,7 +167,7 @@ serve(async (req) => {
     }
   }
 
-  if (role === 'GERENTE') {
+  if (normalizedRole === 'GERENTE') {
     if (normalizedManagerId) {
       return jsonResponse(400, { error: 'Gerente nao pode ter gerente' })
     }
@@ -141,8 +179,29 @@ serve(async (req) => {
     }
   }
 
-  if (role === 'ADMIN') {
+  if (normalizedRole === 'ADMIN' || normalizedRole === 'GESTOR_SIP' || normalizedRole === 'AGENTE_SIP') {
     resolvedTeamId = null
+  }
+
+  if (normalizedRole === 'AGENTE_SIP') {
+    if (!resolvedSipQueueIds.length) {
+      return jsonResponse(400, { error: 'Agente SIP precisa estar em pelo menos uma fila' })
+    }
+    const { data: queues, error: queuesError } = await adminClient
+      .from('sip_queues')
+      .select('id')
+      .in('id', resolvedSipQueueIds)
+      .eq('is_active', true)
+
+    if (queuesError) {
+      return jsonResponse(400, { error: queuesError.message || 'Falha ao validar filas SIP' })
+    }
+
+    const foundIds = new Set((queues || []).map((row) => row.id))
+    const invalidQueue = resolvedSipQueueIds.find((id) => !foundIds.has(id))
+    if (invalidQueue) {
+      return jsonResponse(400, { error: 'Fila SIP invalida ou inativa' })
+    }
   }
 
   const { data: created, error: createError } = await adminClient.auth.admin.createUser({
@@ -150,7 +209,7 @@ serve(async (req) => {
     password: String(password),
     email_confirm: true,
     user_metadata: { full_name: String(full_name) },
-    app_metadata: { role }
+    app_metadata: { role: normalizedRole }
   })
 
   if (createError || !created?.user) {
@@ -166,9 +225,10 @@ serve(async (req) => {
       id: created.user.id,
       email: created.user.email,
       full_name: String(full_name),
-      role,
-      manager_id: role === 'AGENTE' ? normalizedManagerId : null,
-      team_id: resolvedTeamId
+      role: normalizedRole,
+      manager_id: normalizedRole === 'AGENTE' ? normalizedManagerId : null,
+      team_id: resolvedTeamId,
+      sip_default_extension: normalizedRole === 'AGENTE_SIP' ? normalizedSipDefaultExtension : null
     },
     { onConflict: 'id' }
   )
@@ -180,7 +240,7 @@ serve(async (req) => {
     })
   }
 
-  if (role === 'GERENTE') {
+  if (normalizedRole === 'GERENTE') {
     const uniqueSectorIds = Array.from(
       new Set([resolvedTeamId, ...providedSectorIds].filter(Boolean))
     )
@@ -195,6 +255,17 @@ serve(async (req) => {
       if (managerSectorError) {
         return jsonResponse(400, { error: managerSectorError.message || 'Failed to set manager sectors' })
       }
+    }
+  }
+
+  if (normalizedRole === 'AGENTE_SIP') {
+    const rows = resolvedSipQueueIds.map((queueId) => ({
+      queue_id: queueId,
+      agent_id: created.user.id
+    }))
+    const { error: sipQueueError } = await adminClient.from('sip_queue_agents').insert(rows)
+    if (sipQueueError) {
+      return jsonResponse(400, { error: sipQueueError.message || 'Falha ao vincular filas SIP' })
     }
   }
 

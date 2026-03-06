@@ -1,5 +1,49 @@
 ﻿import { supabase } from './supabaseClient'
 
+async function parseFunctionError(error, fallbackMessage) {
+  let message = error?.message || fallbackMessage
+  const response = error?.context
+
+  if (!response) return message
+
+  try {
+    if (typeof response.clone === 'function') {
+      const cloned = response.clone()
+      try {
+        const parsed = await cloned.json()
+        if (parsed?.error) return String(parsed.error)
+        if (parsed?.message) return String(parsed.message)
+      } catch (_) {
+        // ignore json parse
+      }
+      try {
+        const text = await cloned.text()
+        if (text && text.trim()) return text.trim()
+      } catch (_) {
+        // ignore text parse
+      }
+    }
+  } catch (_) {
+    // ignore clone errors
+  }
+
+  try {
+    if (typeof response.json === 'function') {
+      const parsed = await response.json()
+      if (parsed?.error) return String(parsed.error)
+      if (parsed?.message) return String(parsed.message)
+    }
+  } catch (_) {
+    // ignore json parse
+  }
+
+  if (response?.status) {
+    message = `${message} (HTTP ${response.status})`
+  }
+
+  return message
+}
+
 export async function listProfiles() {
   const { data, error } = await supabase
     .from('profiles')
@@ -35,16 +79,7 @@ export async function updateProfile(id, updates) {
     body: { user_id: id, ...updates }
   })
   if (error) {
-    let message = error.message || 'Falha ao atualizar usuario'
-    try {
-      const response = error.context
-      if (response?.json) {
-        const parsed = await response.json()
-        if (parsed?.error) message = parsed.error
-      }
-    } catch (_) {
-      // ignore parse errors
-    }
+    const message = await parseFunctionError(error, 'Falha ao atualizar usuario')
     throw new Error(message)
   }
   if (data?.error) {
@@ -142,16 +177,7 @@ export async function createUserWithEdgeFunction(payload) {
     body: payload
   })
   if (error) {
-    let message = error.message || 'Falha ao criar usuario'
-    try {
-      const response = error.context
-      if (response?.json) {
-        const parsed = await response.json()
-        if (parsed?.error) message = parsed.error
-      }
-    } catch (_) {
-      // ignore parse errors
-    }
+    const message = await parseFunctionError(error, 'Falha ao criar usuario')
     throw new Error(message)
   }
   if (data?.error) {
@@ -166,16 +192,7 @@ export async function deleteUserWithEdgeFunction(userId) {
     body: { user_id: userId }
   })
   if (error) {
-    let message = error.message || 'Falha ao excluir usuario'
-    try {
-      const response = error.context
-      if (response?.json) {
-        const parsed = await response.json()
-        if (parsed?.error) message = parsed.error
-      }
-    } catch (_) {
-      // ignore parse errors
-    }
+    const message = await parseFunctionError(error, 'Falha ao excluir usuario')
     throw new Error(message)
   }
   if (data?.error) {

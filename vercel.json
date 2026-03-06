@@ -1,8 +1,15 @@
 {
-  "rewrites": [
+  "routes": [
     {
-      "source": "/(.*)",
-      "destination": "/index.html"
+      "handle": "filesystem"
+    },
+    {
+      "src": "/main.tsx",
+      "dest": "/main-legacy.js"
+    },
+    {
+      "src": "/.*",
+      "dest": "/index.html"
     }
   ]
 }

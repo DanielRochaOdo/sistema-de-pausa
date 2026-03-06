@@ -53,6 +53,12 @@ serve(async (req) => {
   }
 
   const identifier = String((body as Record<string, unknown>).identifier || '').trim()
+  const expectedRolesRaw = (body as Record<string, unknown>).expected_roles
+  const expectedRoles = Array.isArray(expectedRolesRaw)
+    ? expectedRolesRaw
+        .filter((item) => typeof item === 'string' && item.trim())
+        .map((item) => String(item).trim().toUpperCase())
+    : []
   if (!identifier) {
     return jsonResponse(400, { error: 'Missing identifier' })
   }
@@ -77,8 +83,9 @@ serve(async (req) => {
     const normalizedEmail = normalizeEmail(identifier)
     const { data: emailProfile, error: emailError } = await adminClient
       .from('profiles')
-      .select('id, email')
+      .select('id, email, role')
       .ilike('email', normalizedEmail)
+      .in('role', expectedRoles.length ? expectedRoles : ['ADMIN', 'GERENTE', 'AGENTE', 'GESTOR_SIP', 'AGENTE_SIP'])
       .maybeSingle()
 
     if (emailError) {
@@ -100,11 +107,15 @@ serve(async (req) => {
   }
 
   const findByName = async (pattern: string) => {
-    return adminClient
+    let query = adminClient
       .from('profiles')
-      .select('id, email, full_name')
+      .select('id, email, full_name, role')
       .ilike('full_name', pattern)
       .limit(3)
+    if (expectedRoles.length) {
+      query = query.in('role', expectedRoles)
+    }
+    return query
   }
 
   let { data, error } = await findByName(identifier)

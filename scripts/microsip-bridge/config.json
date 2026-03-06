@@ -1,0 +1,16 @@
+﻿{
+    "webhook_url":  "https://juwyickokbdadhvqefhe.supabase.co/functions/v1/sip-call-webhook",
+    "webhook_token":  "",
+    "webhook_signing_secret":  "c3bc4c9884b30a61c6bb3c3f9c342b3b5a8540bfc97b568dc5d168872f612e7c",
+    "sip_extension":  "203",
+    "queue_code":  "DENTALMASTER",
+    "agent_id":  "",
+    "direction_default":  "INBOUND",
+    "microsip_exe_path":  "",
+    "microsip_ini_path":  "C:\\Users\\daniel.rocha\\AppData\\Roaming\\MicroSIP\\microsip.ini",
+    "auto_start_microsip":  true,
+    "attach_recording_base64":  true,
+    "recording_dir":  "C:\\Users\\Public\\Documents\\MicroSIP\\Recordings",
+    "recording_extension":  "mp3",
+    "recording_max_age_seconds":  300
+}

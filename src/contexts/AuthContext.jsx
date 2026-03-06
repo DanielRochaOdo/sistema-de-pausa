@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../services/supabaseClient'
+import { touchSipSession } from '../services/apiSip'
 import AuthContext from './authContextStore'
 
 const PROFILE_CACHE_KEY = 'pause-control.profile'
@@ -275,7 +276,7 @@ export function AuthProvider({ children }) {
       const { data, error: profileError } = await withTimeout(
         supabase
           .from('profiles')
-          .select('id, full_name, role, team_id, manager_id, is_admin')
+          .select('id, full_name, role, team_id, manager_id, is_admin, sip_default_extension')
           .eq('id', userId)
           .maybeSingle(),
         PROFILE_TIMEOUT_MS,
@@ -425,6 +426,22 @@ export function AuthProvider({ children }) {
   }
 
   const signOut = async () => {
+    try {
+      const currentRole = profileRef.current && profileRef.current.role
+      if (currentRole === 'AGENTE_SIP') {
+        const { error: sipEndError } = await supabase.rpc('sip_end_session')
+        if (sipEndError && sessionRef.current?.user?.id) {
+          await supabase
+            .from('sip_sessions')
+            .update({ logout_at: new Date().toISOString() })
+            .eq('agent_id', sessionRef.current.user.id)
+            .is('logout_at', null)
+        }
+      }
+    } catch (sipErr) {
+      console.warn('[auth] failed to end sip session on sign out', sipErr)
+    }
+
     try {
       const userId = sessionRef.current && sessionRef.current.user && sessionRef.current.user.id
       const token = sessionTokenRef.current || readSessionToken()
@@ -710,6 +727,29 @@ export function AuthProvider({ children }) {
     }
   }, [session && session.user ? session.user.id : null])
 
+  useEffect(() => {
+    const userId = session && session.user ? session.user.id : null
+    const role = profile && profile.role ? profile.role : null
+    if (!userId || role !== 'AGENTE_SIP') return
+
+    let disposed = false
+    const tick = async () => {
+      if (disposed) return
+      try {
+        await touchSipSession()
+      } catch (err) {
+        console.warn('[auth] sip heartbeat failed', err)
+      }
+    }
+
+    tick()
+    const interval = setInterval(tick, 20000)
+    return () => {
+      disposed = true
+      clearInterval(interval)
+    }
+  }, [session && session.user ? session.user.id : null, profile && profile.role ? profile.role : null])
+
   // Guard: verifica no banco a sessão mais recente
   useEffect(() => {
     const userId = session && session.user ? session.user.id : null
@@ -792,13 +832,19 @@ export function AuthProvider({ children }) {
     }
   }, [session && session.user ? session.user.id : null])
 
-  const resolveLoginIdentifier = async (identifier) => {
+  const resolveLoginIdentifier = async (identifier, expectedRoles = []) => {
     const value = String(identifier || '').trim()
     if (!value) throw new Error('Informe seu email ou nome completo')
     if (value.includes('@')) return value
 
+    const normalizedExpectedRoles = Array.isArray(expectedRoles)
+      ? expectedRoles
+          .map((item) => String(item || '').trim().toUpperCase())
+          .filter(Boolean)
+      : []
+
     const { data, error } = await supabase.functions.invoke('resolve-login', {
-      body: { identifier: value }
+      body: { identifier: value, expected_roles: normalizedExpectedRoles }
     })
 
     if (error) {
@@ -819,13 +865,18 @@ export function AuthProvider({ children }) {
     return data.email
   }
 
-  const signIn = async (identifier, password) => {
+  const signIn = async (identifier, password, options = {}) => {
+    const expectedRoles = Array.isArray(options?.expectedRoles)
+      ? options.expectedRoles
+          .map((item) => String(item || '').trim().toUpperCase())
+          .filter(Boolean)
+      : []
     setLoading(true)
     setError(null)
     startSlowSessionTimer()
 
     try {
-      const email = await resolveLoginIdentifier(identifier)
+      const email = await resolveLoginIdentifier(identifier, expectedRoles)
       const { data, error: signInError } = await supabase.auth.signInWithPassword({
         email,
         password
@@ -857,7 +908,14 @@ export function AuthProvider({ children }) {
         } catch (sessionErr) {
           console.warn('[auth] failed to register session', sessionErr)
         }
-        await loadProfile(userId)
+        const loadedProfile = await loadProfile(userId)
+        if (expectedRoles.length) {
+          const role = String(loadedProfile?.role || '').toUpperCase()
+          if (!role || !expectedRoles.includes(role)) {
+            await signOut()
+            throw new Error('Esse acesso nao e permitido neste painel de login')
+          }
+        }
         lastProfileUserIdRef.current = userId
       }
     } catch (err) {

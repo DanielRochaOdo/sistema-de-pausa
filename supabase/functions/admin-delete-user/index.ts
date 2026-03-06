@@ -48,12 +48,16 @@ serve(async (req) => {
   }
 
   let isAdmin = false
+  let requesterRole = ''
   const appRole = authData.user?.app_metadata?.role
-  if (typeof appRole === 'string' && appRole.toUpperCase() === 'ADMIN') {
-    isAdmin = true
+  if (typeof appRole === 'string') {
+    requesterRole = appRole.toUpperCase()
+    if (requesterRole === 'ADMIN') {
+      isAdmin = true
+    }
   }
 
-  if (!isAdmin) {
+  if (!isAdmin || !requesterRole) {
     const { data: profile, error: profileError } = await userClient
       .from('profiles')
       .select('role, is_admin')
@@ -62,11 +66,14 @@ serve(async (req) => {
     if (!profileError) {
       const normalizedProfileRole =
         typeof profile?.role === 'string' ? profile.role.toUpperCase() : ''
+      requesterRole = normalizedProfileRole || requesterRole
       isAdmin = normalizedProfileRole === 'ADMIN' || profile?.is_admin === true
     }
   }
 
-  if (!isAdmin) {
+  const isSipManager = requesterRole === 'GESTOR_SIP'
+
+  if (!isAdmin && !isSipManager) {
     return jsonResponse(403, { error: 'Forbidden' })
   }
 
@@ -93,7 +100,16 @@ serve(async (req) => {
     return jsonResponse(404, { error: profileError?.message || 'User not found' })
   }
 
-  if (targetProfile.role !== 'AGENTE') {
+  const targetRole = String(targetProfile.role || '').toUpperCase()
+  if (targetRole === 'AGENTE_SIP' && !['ADMIN', 'GESTOR_SIP'].includes(requesterRole)) {
+    return jsonResponse(403, { error: 'Sem permissao para excluir AGENTE_SIP' })
+  }
+
+  if (isSipManager && targetRole !== 'AGENTE_SIP') {
+    return jsonResponse(400, { error: 'Gestor SIP pode excluir apenas AGENTE_SIP' })
+  }
+
+  if (isAdmin && !['AGENTE', 'AGENTE_SIP'].includes(targetRole)) {
     return jsonResponse(400, { error: 'Somente agentes podem ser excluidos' })
   }
 

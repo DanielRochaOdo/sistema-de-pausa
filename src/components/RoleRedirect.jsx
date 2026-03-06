@@ -15,6 +15,10 @@ export default function RoleRedirect() {
       return <Navigate to="/manager" replace />
     case 'AGENTE':
       return <Navigate to="/agent" replace />
+    case 'AGENTE_SIP':
+      return <Navigate to="/sip/agent" replace />
+    case 'GESTOR_SIP':
+      return <Navigate to="/sip/manager" replace />
     default:
       return <Navigate to="/unauthorized" replace />
   }

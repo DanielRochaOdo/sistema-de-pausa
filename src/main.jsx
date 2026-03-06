@@ -21,8 +21,39 @@ const applyInitialTheme = () => {
 
 applyInitialTheme()
 
+const cleanupLegacyServiceWorkers = async () => {
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return
+  try {
+    const registrations = await navigator.serviceWorker.getRegistrations()
+    const removals = registrations
+      .filter((registration) => {
+        const scriptUrl = registration.active?.scriptURL || registration.waiting?.scriptURL || ''
+        return scriptUrl && !scriptUrl.endsWith('/push-sw.js')
+      })
+      .map((registration) => registration.unregister())
+    if (removals.length) {
+      await Promise.all(removals)
+    }
+  } catch (err) {
+    console.warn('[sw] failed to cleanup legacy service workers', err)
+  }
+
+  if (typeof window !== 'undefined' && 'caches' in window) {
+    try {
+      const keys = await caches.keys()
+      const legacyKeys = keys.filter((key) => /workbox|vite-pwa|precache/i.test(key))
+      if (legacyKeys.length) {
+        await Promise.all(legacyKeys.map((key) => caches.delete(key)))
+      }
+    } catch (err) {
+      console.warn('[sw] failed to cleanup legacy cache storage', err)
+    }
+  }
+}
+
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
+  window.addEventListener('load', async () => {
+    await cleanupLegacyServiceWorkers()
     navigator.serviceWorker.register('/push-sw.js').catch((err) => {
       console.warn('[push] failed to register service worker', err)
     })

@@ -84,7 +84,8 @@ serve(async (req) => {
     role,
     manager_id,
     team_id,
-    is_admin
+    is_admin,
+    sip_default_extension
   } = body as Record<string, unknown>
 
   if (!user_id || typeof user_id !== 'string') {
@@ -97,8 +98,9 @@ serve(async (req) => {
   const hasManagerId = Object.prototype.hasOwnProperty.call(body, 'manager_id')
   const hasTeamId = Object.prototype.hasOwnProperty.call(body, 'team_id')
   const hasIsAdmin = Object.prototype.hasOwnProperty.call(body, 'is_admin')
+  const hasSipDefaultExtension = Object.prototype.hasOwnProperty.call(body, 'sip_default_extension')
 
-  if (!hasEmail && !hasFullName && !hasRole && !hasManagerId && !hasTeamId && !hasIsAdmin) {
+  if (!hasEmail && !hasFullName && !hasRole && !hasManagerId && !hasTeamId && !hasIsAdmin && !hasSipDefaultExtension) {
     return jsonResponse(400, { error: 'Nenhuma alteracao enviada' })
   }
 
@@ -107,8 +109,9 @@ serve(async (req) => {
   }
 
   if (hasRole) {
-    const allowedRoles = ['ADMIN', 'GERENTE', 'AGENTE']
-    if (typeof role !== 'string' || !allowedRoles.includes(role)) {
+    const normalizedRole = typeof role === 'string' ? role.toUpperCase() : ''
+    const allowedRoles = ['ADMIN', 'GERENTE', 'AGENTE', 'GESTOR_SIP', 'AGENTE_SIP']
+    if (!allowedRoles.includes(normalizedRole)) {
       return jsonResponse(400, { error: 'Invalid role' })
     }
   }
@@ -142,9 +145,10 @@ serve(async (req) => {
     }
   }
   if (hasRole) {
+    const normalizedRole = typeof role === 'string' ? role.toUpperCase() : ''
     authUpdates.app_metadata = {
       ...(existingUser?.app_metadata || {}),
-      role: String(role)
+      role: normalizedRole
     }
   }
 
@@ -171,7 +175,7 @@ serve(async (req) => {
     profileUpdates.full_name = String(full_name).trim()
   }
   if (hasRole) {
-    profileUpdates.role = String(role)
+    profileUpdates.role = String(role).toUpperCase()
   }
   if (hasManagerId) {
     profileUpdates.manager_id =
@@ -182,6 +186,12 @@ serve(async (req) => {
   }
   if (hasIsAdmin) {
     profileUpdates.is_admin = !!is_admin
+  }
+  if (hasSipDefaultExtension) {
+    profileUpdates.sip_default_extension =
+      typeof sip_default_extension === 'string' && sip_default_extension.trim()
+        ? sip_default_extension.trim()
+        : null
   }
 
   const { data: updatedProfile, error: profileError } = await adminClient

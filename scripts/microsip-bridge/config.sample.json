@@ -1,0 +1,16 @@
+{
+  "webhook_url": "https://SEU-PROJETO.supabase.co/functions/v1/sip-call-webhook",
+  "webhook_token": "SEU_SIP_WEBHOOK_TOKEN",
+  "webhook_signing_secret": "SEU_SIP_WEBHOOK_SIGNING_SECRET",
+  "sip_extension": "203",
+  "queue_code": "DENTALMASTER",
+  "agent_id": "",
+  "direction_default": "INBOUND",
+  "microsip_exe_path": "",
+  "microsip_ini_path": "",
+  "auto_start_microsip": true,
+  "attach_recording_base64": true,
+  "recording_dir": "",
+  "recording_extension": "mp3",
+  "recording_max_age_seconds": 300
+}

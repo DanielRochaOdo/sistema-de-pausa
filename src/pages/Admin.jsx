@@ -44,6 +44,12 @@ const emptyAdminForm = {
   full_name: ''
 }
 
+const emptySipManagerForm = {
+  email: '',
+  password: '',
+  full_name: ''
+}
+
 const minutesToTime = (minutes) => {
   if (minutes === null || minutes === undefined || Number.isNaN(minutes)) return ''
   const safeMinutes = Math.max(0, Number(minutes))
@@ -76,6 +82,7 @@ export default function Admin() {
   const [userForm, setUserForm] = useState(emptyUserForm)
   const [managerForm, setManagerForm] = useState(emptyManagerForm)
   const [adminForm, setAdminForm] = useState(emptyAdminForm)
+  const [sipManagerForm, setSipManagerForm] = useState(emptySipManagerForm)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -137,6 +144,10 @@ export default function Admin() {
   const [logoutUserId, setLogoutUserId] = useState('')
   const [logoutSectorId, setLogoutSectorId] = useState('')
   const [logoutBusy, setLogoutBusy] = useState(false)
+  const canAccessSipTab = currentProfile?.role === 'ADMIN'
+  const appOrigin = typeof window !== 'undefined' ? window.location.origin : ''
+  const sipAgentLoginLink = `${appOrigin}/login/sip-agent`
+  const sipManagerLoginLink = `${appOrigin}/login/sip-manager`
 
   const normalizeEmail = (value) => String(value || '').trim().toLowerCase()
   const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(value))
@@ -189,6 +200,12 @@ export default function Admin() {
   useEffect(() => {
     refreshAll()
   }, [])
+
+  useEffect(() => {
+    if (tab === 'sip' && !canAccessSipTab) {
+      setTab('users')
+    }
+  }, [tab, canAccessSipTab])
 
   const handleCreateUser = async (event) => {
     event.preventDefault()
@@ -281,6 +298,34 @@ export default function Admin() {
       await refreshAll()
     } catch (err) {
       setError(err.message || 'Falha ao criar admin')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleCreateSipManager = async (event) => {
+    event.preventDefault()
+    setError('')
+    setSuccess('')
+    setBusy(true)
+    try {
+      if (!isValidEmail(sipManagerForm.email)) {
+        throw new Error('Email invalido.')
+      }
+      if (isDuplicateEmail(sipManagerForm.email)) {
+        throw new Error('Email ja cadastrado.')
+      }
+      await createUserWithEdgeFunction({
+        email: sipManagerForm.email,
+        password: sipManagerForm.password,
+        full_name: sipManagerForm.full_name,
+        role: 'GESTOR_SIP'
+      })
+      setSuccess('Gestor SIP criado com sucesso.')
+      setSipManagerForm(emptySipManagerForm)
+      await refreshAll()
+    } catch (err) {
+      setError(err.message || 'Falha ao criar gestor SIP')
     } finally {
       setBusy(false)
     }
@@ -1072,6 +1117,14 @@ export default function Admin() {
           >
             Pausas programadas
           </button>
+          {canAccessSipTab ? (
+            <button
+              className={`btn ${tab === 'sip' ? 'bg-brand-600 text-white' : 'btn-ghost'}`}
+              onClick={() => setTab('sip')}
+            >
+              SIP
+            </button>
+          ) : null}
         </div>
 
         {tab === 'users' ? (
@@ -2085,6 +2138,87 @@ export default function Admin() {
                   ))}
                 {!profiles.filter((profile) => profile.role === 'ADMIN').length ? (
                   <p className="text-sm text-slate-500">Nenhum admin cadastrado.</p>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {canAccessSipTab && tab === 'sip' ? (
+          <div className="grid gap-6 lg:grid-cols-[2fr_3fr]">
+            <div className="space-y-6">
+              <div className="card">
+                <h2 className="font-display text-xl font-semibold text-slate-900">Criar gestor SIP</h2>
+                <p className="text-sm text-slate-600 mt-1">
+                  O gestor SIP acessa o modulo SIP e pode criar agentes SIP e filas.
+                </p>
+                <form className="mt-4 space-y-3" onSubmit={handleCreateSipManager}>
+                  <div>
+                    <label className="label">Email</label>
+                    <input
+                      className="input mt-1"
+                      value={sipManagerForm.email}
+                      onChange={(e) => setSipManagerForm({ ...sipManagerForm, email: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="label">Senha provisoria</label>
+                    <input
+                      className="input mt-1"
+                      type="password"
+                      value={sipManagerForm.password}
+                      onChange={(e) => setSipManagerForm({ ...sipManagerForm, password: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="label">Nome completo</label>
+                    <input
+                      className="input mt-1"
+                      value={sipManagerForm.full_name}
+                      onChange={(e) => setSipManagerForm({ ...sipManagerForm, full_name: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <button className="btn-primary w-full" type="submit" disabled={busy}>
+                    {busy ? 'Criando...' : 'Criar gestor SIP'}
+                  </button>
+                </form>
+              </div>
+
+              <div className="card">
+                <h2 className="font-display text-xl font-semibold text-slate-900">Links de acesso SIP</h2>
+                <div className="mt-4 space-y-3 text-sm">
+                  <div>
+                    <p className="label">Login Gestor SIP</p>
+                    <a className="text-brand-700 underline break-all" href={sipManagerLoginLink}>
+                      {sipManagerLoginLink}
+                    </a>
+                  </div>
+                  <div>
+                    <p className="label">Login Agente SIP</p>
+                    <a className="text-brand-700 underline break-all" href={sipAgentLoginLink}>
+                      {sipAgentLoginLink}
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="card">
+              <h2 className="font-display text-xl font-semibold text-slate-900">Gestores SIP cadastrados</h2>
+              <div className="mt-4 space-y-2">
+                {profiles
+                  .filter((profile) => profile.role === 'GESTOR_SIP')
+                  .map((manager) => (
+                    <div key={manager.id} className="rounded-xl border border-slate-200 px-3 py-2">
+                      <p className="text-sm font-semibold text-slate-900">{manager.full_name}</p>
+                      <p className="text-xs text-slate-500">{manager.email || '-'}</p>
+                    </div>
+                  ))}
+                {!profiles.filter((profile) => profile.role === 'GESTOR_SIP').length ? (
+                  <p className="text-sm text-slate-500">Nenhum gestor SIP cadastrado.</p>
                 ) : null}
               </div>
             </div>

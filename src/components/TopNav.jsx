@@ -24,7 +24,8 @@ export default function TopNav({ agentControls, agentNotificationAction }) {
     return document.documentElement.classList.contains('theme-dark')
   })
 
-  const showAgent = profile?.role === 'AGENTE'
+  const showAgent = profile?.role === 'AGENTE' || profile?.role === 'AGENTE_SIP'
+  const showSipManager = profile?.role === 'GESTOR_SIP'
   const showManager = profile?.role === 'GERENTE' || profile?.role === 'ADMIN'
   const showAdmin = profile?.role === 'ADMIN'
   const isAdminScreen = location?.pathname?.startsWith('/admin')
@@ -415,7 +416,27 @@ export default function TopNav({ agentControls, agentNotificationAction }) {
                 >
                   Minha pausa
                 </NavLink>
+                {profile?.role === 'AGENTE_SIP' ? (
+                  <NavLink
+                    to="/sip/agent"
+                    className={({ isActive }) =>
+                      `btn h-10 ${isActive ? 'bg-brand-600 text-white' : 'btn-ghost text-slate-700'}`
+                    }
+                  >
+                    Painel SIP
+                  </NavLink>
+                ) : null}
               </div>
+            ) : null}
+            {showSipManager ? (
+              <NavLink
+                to="/sip/manager"
+                className={({ isActive }) =>
+                  `btn h-10 ${isActive ? 'bg-brand-600 text-white' : 'btn-ghost text-slate-700'}`
+                }
+              >
+                Dashboard SIP
+              </NavLink>
             ) : null}
             {showManagerTools ? (
               <div className="flex items-center gap-2">

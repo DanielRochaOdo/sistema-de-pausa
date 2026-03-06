@@ -1,0 +1,21 @@
+{
+  "name": "Sistema de Pausa SIP",
+  "short_name": "Pausa SIP",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#0f172a",
+  "lang": "pt-BR",
+  "icons": [
+    {
+      "src": "/logo-odontoart-notification.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/logo-odontoart-notification.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

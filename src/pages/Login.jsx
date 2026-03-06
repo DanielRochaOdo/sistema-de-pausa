@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/useAuth'
 
+const COMMON_ROLES = ['ADMIN', 'GERENTE', 'AGENTE']
+
 export default function Login() {
   const { session, profile, loading, signIn, signOut, refreshProfile, error } = useAuth()
   const navigate = useNavigate()
@@ -15,6 +17,8 @@ export default function Login() {
       if (profile.role === 'ADMIN') navigate('/admin', { replace: true })
       if (profile.role === 'GERENTE') navigate('/manager', { replace: true })
       if (profile.role === 'AGENTE') navigate('/agent', { replace: true })
+      if (profile.role === 'AGENTE_SIP') navigate('/sip/agent', { replace: true })
+      if (profile.role === 'GESTOR_SIP') navigate('/sip/manager', { replace: true })
     }
   }, [session, profile, loading, navigate])
 
@@ -23,9 +27,14 @@ export default function Login() {
     setLocalError('')
     setBusy(true)
     try {
-      await signIn(identifier, password)
+      await signIn(identifier, password, { expectedRoles: COMMON_ROLES })
     } catch (err) {
-      setLocalError(err.message || 'Falha no login')
+      const raw = String(err?.message || '')
+      if (/nao e permitido neste painel/i.test(raw)) {
+        setLocalError('Este usuario SIP deve entrar pelo painel SIP (/login/sip-agent ou /login/sip-manager).')
+      } else {
+        setLocalError(raw || 'Falha no login')
+      }
     } finally {
       setBusy(false)
     }
@@ -78,6 +87,11 @@ export default function Login() {
           <button className="btn-primary w-full" type="submit" disabled={busy}>
             {busy ? 'Entrando...' : 'Entrar'}
           </button>
+
+          <div className="text-xs text-slate-500 text-center">
+            Login SIP: <span className="font-medium">/login/sip-agent</span> e{' '}
+            <span className="font-medium">/login/sip-manager</span>
+          </div>
 
           {session ? (
             <button className="btn-ghost w-full" type="button" onClick={signOut} disabled={busy}>
